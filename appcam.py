@@ -3,10 +3,11 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from io import BytesIO
+from io import BytesIO, StringIO
 from plotly.subplots import make_subplots
 import re
 import requests
+import time
 
 # ─── Configuración de la página ─────────────────────────────────────────────
 st.set_page_config(
@@ -74,23 +75,24 @@ def extract_numeric_weight(val):
             return float(m.group(1).replace(",", "."))
     return 0.0
 
-# ─── Lectura robusta de Google Sheets (con requests para depuración) ───────
+# ─── Lectura robusta de Google Sheets (con cache control) ────────────────
+# Usamos cache pero el usuario puede forzar recarga añadiendo un parámetro "cache_bust" en la URL.
 @st.cache_data
 def load_gsheet_csv(url: str) -> pd.DataFrame:
     headers = {"User-Agent": "Mozilla/5.0"}
-    resp = requests.get(url, headers=headers, timeout=15)
+    resp = requests.get(url, headers=headers, timeout=20)
     if resp.status_code != 200:
         raise RuntimeError(f"Error al descargar CSV. status_code={resp.status_code}. URL: {url}")
     text = resp.text
+    # Si el contenido parece HTML (login), lanzar excepción con fragmento para depuración
     if text.lstrip().startswith("<"):
         snippet = text[:1000].replace("\n", " ")
         raise RuntimeError(f"El contenido descargado parece HTML (posible página de login). Fragmento: {snippet}")
-    from io import StringIO
     df = pd.read_csv(StringIO(text))
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
-# ─── Sidebar: permitir URL personalizada y mostrar errores ─────────────────
+# ─── Sidebar: URL editable y control de recarga ────────────────────────────
 with st.sidebar:
     st.markdown("## 🌿 Panel de control — Campañas Ambientales")
     st.markdown("---")
@@ -101,6 +103,16 @@ with st.sidebar:
     gsheet_tiendas_url = st.text_input("URL CSV Tiendas", value=default_tiendas_url)
     st.markdown("---")
     st.caption("Asegúrate de que la hoja sea visible para 'Cualquiera con el enlace' o publica la hoja.")
+    st.markdown("---")
+    # Botones para forzar recarga (cache-bust)
+    if "planta_cache_bust" not in st.session_state:
+        st.session_state.planta_cache_bust = ""
+    if "tiendas_cache_bust" not in st.session_state:
+        st.session_state.tiendas_cache_bust = ""
+    if st.button("🔄 Forzar recarga Planta"):
+        st.session_state.planta_cache_bust = f"&cache_bust={int(time.time())}"
+    if st.button("🔄 Forzar recarga Tiendas"):
+        st.session_state.tiendas_cache_bust = f"&cache_bust={int(time.time())}"
 
 # ─── Cargar datos con manejo de errores y mensajes claros ──────────────────
 load_errors = []
@@ -111,30 +123,36 @@ def try_load(url):
     except Exception as e:
         return pd.DataFrame(), str(e)
 
-df_planta_raw, err_p = try_load(gsheet_planta_url)
+# Construir URLs efectivas (añadir cache_bust si el usuario lo solicitó)
+planta_url_effective = gsheet_planta_url + st.session_state.get("planta_cache_bust", "")
+tiendas_url_effective = gsheet_tiendas_url + st.session_state.get("tiendas_cache_bust", "")
+
+df_planta_raw, err_p = try_load(planta_url_effective)
 if err_p:
+    # Intentar con gid=0 si no se proporcionó gid explícito y no se forzó cache bust
     if "gid=" not in gsheet_planta_url:
-        try_url = build_export_url(GSHEET_PLANTA_ID, gid="0")
+        try_url = build_export_url(GSHEET_PLANTA_ID, gid="0") + st.session_state.get("planta_cache_bust", "")
         df_planta_raw, err_p2 = try_load(try_url)
         if err_p2:
             load_errors.append(("Planta", err_p2))
         else:
-            gsheet_planta_url = try_url
+            planta_url_effective = try_url
     else:
         load_errors.append(("Planta", err_p))
 
-df_tiendas_raw, err_t = try_load(gsheet_tiendas_url)
+df_tiendas_raw, err_t = try_load(tiendas_url_effective)
 if err_t:
     if "gid=" not in gsheet_tiendas_url:
-        try_url = build_export_url(GSHEET_TIENDAS_ID, gid="0")
+        try_url = build_export_url(GSHEET_TIENDAS_ID, gid="0") + st.session_state.get("tiendas_cache_bust", "")
         df_tiendas_raw, err_t2 = try_load(try_url)
         if err_t2:
             load_errors.append(("Tiendas", err_t2))
         else:
-            gsheet_tiendas_url = try_url
+            tiendas_url_effective = try_url
     else:
         load_errors.append(("Tiendas", err_t))
 
+# Mostrar errores en sidebar (si los hay)
 if load_errors:
     for source, msg in load_errors:
         st.sidebar.error(f"{source}: {msg}")
@@ -144,10 +162,12 @@ def prepare_planta(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     cols = df.columns.tolist()
+    # Eliminar columna de marca temporal si existe
     for c in cols:
         if "marca temporal" in normalize_col(c) or "timestamp" in normalize_col(c):
             df = df.drop(columns=[c])
             break
+    # Detectar columnas de nombre y área
     name_col = None
     area_col = None
     for c in df.columns:
@@ -213,6 +233,7 @@ with tab1:
 
     if df_planta.empty:
         st.warning("No hay datos disponibles para Planta.")
+        st.info("Si la hoja no es pública o requiere login, pega la URL de exportación CSV con gid en la barra lateral.")
     else:
         areas = sorted(df_planta["area"].dropna().unique().tolist())
         sel_areas = st.multiselect("Filtrar por Área", options=areas, default=areas)
@@ -281,13 +302,12 @@ with tab1:
                     st.plotly_chart(fig, use_container_width=True)
 
         # Heatmap: área vs campañas (suma de kg)
-        st.markdown('<div class="section-title">Mapa de calor: cumplimiento por Área y Campaña — Planta</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Mapa de calor: Kg recolectados por Área y Campaña — Planta</div>', unsafe_allow_html=True)
         heat_df = dfp.groupby("area")[["botellas", "tapas", "aceite"]].sum().reset_index()
         if heat_df.empty:
             st.info("No hay datos suficientes para el mapa de calor de Planta.")
         else:
             heat_mat = heat_df.set_index("area")[["botellas", "tapas", "aceite"]]
-            # Normalizar o usar valores absolutos; aquí mostramos kg absolutos
             fig_heat = px.imshow(heat_mat,
                                  labels=dict(x="Campaña", y="Área", color="Kg recolectados"),
                                  x=heat_mat.columns.tolist(),
@@ -320,7 +340,7 @@ with tab2:
 
     if df_tiendas.empty:
         st.warning("No hay datos disponibles para Tiendas.")
-        st.info("Si la hoja no es pública o requiere login, pega la URL de exportación CSV con gid en la barra lateral (ej: .../export?format=csv&gid=0).")
+        st.info("Si la hoja no es pública o requiere login, pega la URL de exportación CSV con gid en la barra lateral.")
     else:
         tiendas = sorted(df_tiendas["tienda"].dropna().unique().tolist())
         sel_tiendas = st.multiselect("Filtrar por Tienda", options=tiendas, default=tiendas)
@@ -358,7 +378,7 @@ with tab2:
                     st.plotly_chart(fig, use_container_width=True)
 
         # Heatmap: tienda vs campañas (suma de kg)
-        st.markdown('<div class="section-title">Mapa de calor: Kg recolectados — Tiendas</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Mapa de calor: Kg recolectados por Tienda y Campaña — Tiendas</div>', unsafe_allow_html=True)
         heat_df_t = dft.groupby("tienda")[["botellas", "tapas", "aceite"]].sum().reset_index()
         if heat_df_t.empty:
             st.info("No hay datos suficientes para el mapa de calor de Tiendas.")
@@ -371,7 +391,7 @@ with tab2:
                                    color_continuous_scale=["#ef4444", "#f59e0b", "#2e9e5b"],
                                    text_auto=".1f",
                                    aspect="auto",
-                                   title="Kg recolectados")
+                                   title="Kg recolectados por Tienda y Campaña (Tiendas)")
             fig_heat_t.update_layout(height=420, margin=dict(l=140, r=20, t=60, b=20))
             st.plotly_chart(fig_heat_t, use_container_width=True)
 
