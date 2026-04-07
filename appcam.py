@@ -151,31 +151,45 @@ if load_errors:
     for source, msg in load_errors:
         st.sidebar.error(f"{source}: {msg}")
 
-# ─── Preparar y limpiar cada dataset ────────────────────────────────────────
+# ─── Preparar y limpiar cada dataset (con columna fecha preservada) ───────
+def detect_date_column(cols):
+    for c in cols:
+        cn = normalize_col(c)
+        if "marca temporal" in cn or "timestamp" in cn or "fecha" in cn or "date" in cn:
+            return c
+    return None
+
 def prepare_planta(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     cols = df.columns.tolist()
-    for c in cols:
-        if "marca temporal" in normalize_col(c) or "timestamp" in normalize_col(c):
-            df = df.drop(columns=[c])
-            break
+    date_col = detect_date_column(cols)
+    # parse date if exists
+    fecha_series = None
+    if date_col and date_col in df.columns:
+        fecha_series = pd.to_datetime(df[date_col], dayfirst=True, errors="coerce")
+    # remove marca temporal column from later heuristics but keep parsed fecha
+    df_work = df.copy()
+    if date_col:
+        # keep original for debugging but drop from columns used to detect name/area
+        df_work = df_work.drop(columns=[date_col])
+    # Detect name and area
     name_col = None
     area_col = None
-    for c in df.columns:
+    for c in df_work.columns:
         cn = normalize_col(c)
         if "nombre" in cn and name_col is None:
             name_col = c
         if ("área" in cn or "area" in cn or "pertenece" in cn) and area_col is None:
             area_col = c
-    remaining = [c for c in df.columns if c not in ([name_col] if name_col else []) + ([area_col] if area_col else [])]
+    remaining = [c for c in df_work.columns if c not in ([name_col] if name_col else []) + ([area_col] if area_col else [])]
     if name_col is None and len(remaining) >= 1:
         name_col = remaining[0]
     if area_col is None and len(remaining) >= 2:
         area_col = remaining[1]
-    if area_col is None and len(df.columns) > 1:
-        area_col = df.columns[1]
-    camp_map = find_campaign_cols(df.columns)
+    if area_col is None and len(df_work.columns) > 1:
+        area_col = df_work.columns[1]
+    camp_map = find_campaign_cols(df.columns)  # use original df columns to find campaign cols
     df_proc = pd.DataFrame()
     df_proc["nombre"] = df[name_col].astype(str).fillna("Sin nombre") if name_col in df.columns else "Sin nombre"
     df_proc["area"] = df[area_col].astype(str).fillna("Sin área") if area_col in df.columns else "Sin área"
@@ -185,23 +199,38 @@ def prepare_planta(df: pd.DataFrame) -> pd.DataFrame:
         else:
             df_proc[key] = 0.0
     df_proc["total_kg"] = df_proc[["botellas", "tapas", "aceite"]].sum(axis=1)
+    # attach fecha if parsed
+    if fecha_series is not None:
+        # align by index
+        fecha_series = fecha_series.reset_index(drop=True)
+        df_proc = df_proc.reset_index(drop=True)
+        if len(fecha_series) == len(df_proc):
+            df_proc["fecha"] = fecha_series
+        else:
+            # if lengths differ, still try to add NaT column
+            df_proc["fecha"] = pd.NaT
+    else:
+        df_proc["fecha"] = pd.NaT
     return df_proc
 
 def prepare_tiendas(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     cols = df.columns.tolist()
-    for c in cols:
-        if "marca temporal" in normalize_col(c) or "timestamp" in normalize_col(c):
-            df = df.drop(columns=[c])
-            break
+    date_col = detect_date_column(cols)
+    fecha_series = None
+    if date_col and date_col in df.columns:
+        fecha_series = pd.to_datetime(df[date_col], dayfirst=True, errors="coerce")
+    df_work = df.copy()
+    if date_col:
+        df_work = df_work.drop(columns=[date_col])
     tienda_col = None
-    for c in df.columns:
+    for c in df_work.columns:
         if "tienda" in normalize_col(c):
             tienda_col = c
             break
     if tienda_col is None:
-        tienda_col = df.columns[0]
+        tienda_col = df_work.columns[0]
     camp_map = find_campaign_cols(df.columns)
     df_proc = pd.DataFrame()
     df_proc["tienda"] = df[tienda_col].astype(str).fillna("Sin tienda")
@@ -211,6 +240,15 @@ def prepare_tiendas(df: pd.DataFrame) -> pd.DataFrame:
         else:
             df_proc[key] = 0.0
     df_proc["total_kg"] = df_proc[["botellas", "tapas", "aceite"]].sum(axis=1)
+    if fecha_series is not None:
+        fecha_series = fecha_series.reset_index(drop=True)
+        df_proc = df_proc.reset_index(drop=True)
+        if len(fecha_series) == len(df_proc):
+            df_proc["fecha"] = fecha_series
+        else:
+            df_proc["fecha"] = pd.NaT
+    else:
+        df_proc["fecha"] = pd.NaT
     return df_proc
 
 df_planta = prepare_planta(df_planta_raw)
@@ -227,9 +265,21 @@ with tab1:
         st.warning("No hay datos disponibles para Planta.")
         st.info("Si la hoja no es pública o requiere login, pega la URL de exportación CSV con gid en la barra lateral.")
     else:
-        areas = sorted(df_planta["area"].dropna().unique().tolist())
+        # Fecha filter using 'fecha' column if available
+        if "fecha" in df_planta.columns and df_planta["fecha"].notna().any():
+            min_f = df_planta["fecha"].min().date()
+            max_f = df_planta["fecha"].max().date()
+            rango = st.date_input("Rango de fechas (Planta)", value=(min_f, max_f), min_value=min_f, max_value=max_f)
+            if isinstance(rango, (list, tuple)) and len(rango) == 2:
+                df_filtered = df_planta[(df_planta["fecha"].dt.date >= rango[0]) & (df_planta["fecha"].dt.date <= rango[1])].copy()
+            else:
+                df_filtered = df_planta.copy()
+        else:
+            df_filtered = df_planta.copy()
+
+        areas = sorted(df_filtered["area"].dropna().unique().tolist())
         sel_areas = st.multiselect("Filtrar por Área", options=areas, default=areas)
-        dfp = df_planta[df_planta["area"].isin(sel_areas)].copy()
+        dfp = df_filtered[df_filtered["area"].isin(sel_areas)].copy()
 
         if dfp.empty:
             st.info("No hay registros después de aplicar filtros.")
@@ -272,6 +322,8 @@ with tab1:
                 if grp.empty:
                     st.info(f"No hay datos para {label}")
                 else:
+                    # ensure descending order with highest at top
+                    grp = grp.sort_values(key, ascending=True)  # for horizontal bar, reverse axis
                     fig = px.bar(grp, x=key, y="nombre", orientation="h", text=key,
                                  labels={key: "Kg", "nombre": "Persona"}, title=f"Top 10 personas — {label}")
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
@@ -288,6 +340,7 @@ with tab1:
                 if grp.empty:
                     st.info(f"No hay datos para {label}")
                 else:
+                    grp = grp.sort_values(key, ascending=True)
                     fig = px.bar(grp, x=key, y="area", orientation="h", text=key,
                                  labels={key: "Kg", "area": "Área"}, title=f"Top 10 áreas — {label}")
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
@@ -325,7 +378,9 @@ with tab1:
         # Tabla detallada
         st.markdown('<div class="section-title">Registros detallados — Planta</div>', unsafe_allow_html=True)
         df_table = dfp.copy()
-        df_table = df_table.rename(columns={"nombre":"Nombre", "area":"Área", "botellas":"Botellas (kg)", "tapas":"Tapas (kg)", "aceite":"Aceite (kg)", "total_kg":"Total (kg)"})
+        df_table = df_table.rename(columns={"nombre":"Nombre", "area":"Área", "botellas":"Botellas (kg)", "tapas":"Tapas (kg)", "aceite":"Aceite (kg)", "total_kg":"Total (kg)", "fecha":"Fecha"})
+        if "Fecha" in df_table.columns:
+            df_table["Fecha"] = pd.to_datetime(df_table["Fecha"], errors="coerce").dt.strftime("%d/%m/%Y")
         st.dataframe(df_table.sort_values("Total (kg)", ascending=False), use_container_width=True, height=320)
 
 # ------------------ PESTAÑA 2: TIENDAS -------------------------------------
@@ -336,9 +391,21 @@ with tab2:
         st.warning("No hay datos disponibles para Tiendas.")
         st.info("Si la hoja no es pública o requiere login, pega la URL de exportación CSV con gid en la barra lateral.")
     else:
-        tiendas = sorted(df_tiendas["tienda"].dropna().unique().tolist())
+        # Fecha filter using 'fecha' column if available
+        if "fecha" in df_tiendas.columns and df_tiendas["fecha"].notna().any():
+            min_f = df_tiendas["fecha"].min().date()
+            max_f = df_tiendas["fecha"].max().date()
+            rango_t = st.date_input("Rango de fechas (Tiendas)", value=(min_f, max_f), min_value=min_f, max_value=max_f, key="rango_tiendas")
+            if isinstance(rango_t, (list, tuple)) and len(rango_t) == 2:
+                df_t_filtered = df_tiendas[(df_tiendas["fecha"].dt.date >= rango_t[0]) & (df_tiendas["fecha"].dt.date <= rango_t[1])].copy()
+            else:
+                df_t_filtered = df_tiendas.copy()
+        else:
+            df_t_filtered = df_tiendas.copy()
+
+        tiendas = sorted(df_t_filtered["tienda"].dropna().unique().tolist())
         sel_tiendas = st.multiselect("Filtrar por Tienda", options=tiendas, default=tiendas)
-        dft = df_tiendas[df_tiendas["tienda"].isin(sel_tiendas)].copy()
+        dft = df_t_filtered[df_t_filtered["tienda"].isin(sel_tiendas)].copy()
 
         if dft.empty:
             st.info("No hay registros después de aplicar filtros en Tiendas.")
@@ -365,6 +432,7 @@ with tab2:
                 if grp.empty:
                     st.info(f"No hay datos para {label}")
                 else:
+                    grp = grp.sort_values(key, ascending=True)
                     fig = px.bar(grp, x=key, y="tienda", orientation="h", text=key,
                                  labels={key: "Kg", "tienda": "Tienda"}, title=f"Top 10 tiendas — {label}")
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
@@ -402,7 +470,9 @@ with tab2:
         # Tabla detallada Tiendas
         st.markdown('<div class="section-title">Registros detallados — Tiendas</div>', unsafe_allow_html=True)
         df_table_t = dft.copy()
-        df_table_t = df_table_t.rename(columns={"tienda":"Tienda", "botellas":"Botellas (kg)", "tapas":"Tapas (kg)", "aceite":"Aceite (kg)", "total_kg":"Total (kg)"})
+        df_table_t = df_table_t.rename(columns={"tienda":"Tienda", "botellas":"Botellas (kg)", "tapas":"Tapas (kg)", "aceite":"Aceite (kg)", "total_kg":"Total (kg)", "fecha":"Fecha"})
+        if "Fecha" in df_table_t.columns:
+            df_table_t["Fecha"] = pd.to_datetime(df_table_t["Fecha"], errors="coerce").dt.strftime("%d/%m/%Y")
         st.dataframe(df_table_t.sort_values("Total (kg)", ascending=False), use_container_width=True, height=320)
 
 # ─── Exportar datos procesados (ambas pestañas) ─────────────────────────────
