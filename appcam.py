@@ -358,7 +358,7 @@ with tab2:
                     st.plotly_chart(fig, use_container_width=True)
 
         # Heatmap: tienda vs campañas (suma de kg)
-        st.markdown('<div class="section-title">Mapa de calor: Kg recolectados por Tienda y Campaña — Tiendas</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Mapa de calor: Kg recolectados — Tiendas</div>', unsafe_allow_html=True)
         heat_df_t = dft.groupby("tienda")[["botellas", "tapas", "aceite"]].sum().reset_index()
         if heat_df_t.empty:
             st.info("No hay datos suficientes para el mapa de calor de Tiendas.")
@@ -371,7 +371,7 @@ with tab2:
                                    color_continuous_scale=["#ef4444", "#f59e0b", "#2e9e5b"],
                                    text_auto=".1f",
                                    aspect="auto",
-                                   title="Kg recolectados por Tienda y Campaña (Tiendas)")
+                                   title="Kg recolectados")
             fig_heat_t.update_layout(height=420, margin=dict(l=140, r=20, t=60, b=20))
             st.plotly_chart(fig_heat_t, use_container_width=True)
 
