@@ -32,102 +32,97 @@ st.markdown("""
 
 st.markdown('<div class="main-header"><h1>🌱 Dashboard — Campañas Ambientales</h1><p>Resumen de recolección por campaña: Botellas, Tapas y Aceite</p></div>', unsafe_allow_html=True)
 
-# ─── Configuración de columnas esperadas y mapeo flexible ───────────────────
-EXPECTED_COLUMNS = {
-    "timestamp": ["marca temporal", "marca_temporal", "timestamp", "fecha", "fecha_hora"],
-    "nombre": ["nombre", "persona", "quien"],
-    "area": ["area", "área", "área a la que pertenece", "area a la que pertenece", "departamento"],
-    "botellas": ["botellas con amor", "botellas", "botellas_kg", "botellas (kg)"],
-    "tapas": ["tapas para sanar", "tapas", "tapas_kg", "tapas (kg)"],
-    "aceite": ["aceite green fuel", "aceite", "aceite_kg", "aceite (kg)"],
-}
-
+# ─── Funciones utilitarias ───────────────────────────────────────────────────
 def normalize(s: str) -> str:
-    return str(s).strip().lower().replace("\n", " ").replace("\r", " ")
+    return str(s).strip().lower().replace("\n", " ").replace("\r", " ").replace(":", "")
 
-def build_rename_map(cols):
-    cols_norm = {normalize(c): c for c in cols}
-    rename = {}
-    for target, variants in EXPECTED_COLUMNS.items():
-        for v in variants:
-            if v in cols_norm:
-                rename[cols_norm[v]] = target
-                break
-        else:
-            # try partial match
-            for col_norm, col_orig in cols_norm.items():
-                for v in variants:
-                    if v in col_norm:
-                        rename[col_orig] = target
-                        break
-                if col_orig in rename:
-                    break
-    return rename
-
-# ─── Funciones de carga y procesamiento ─────────────────────────────────────
+# ─── Cargar y renombrar columnas (renombrado explícito para tu hoja) ───────
 @st.cache_data
-def load_gsheet_csv(export_csv_url: str) -> pd.DataFrame:
-    df = pd.read_csv(export_csv_url)
-    return df
-
-@st.cache_data
-def process_campaign_df(df: pd.DataFrame) -> pd.DataFrame:
-    # normalize column names (strip)
-    df = df.copy()
-    df.columns = [str(c).strip() for c in df.columns]
-    rename_map = build_rename_map(df.columns)
+def load_and_prepare_gsheet(csv_url: str) -> pd.DataFrame:
+    # Leer CSV exportado desde Google Sheets
+    df = pd.read_csv(csv_url)
+    # Mapeo manual basado en los encabezados que compartiste
+    rename_manual = {
+        "Marca temporal": "timestamp",
+        "Marca temporal ": "timestamp",
+        "timestamp": "timestamp",
+        "Timestamp": "timestamp",
+        "Nombre:": "nombre",
+        "Nombre": "nombre",
+        "Área a la que pertenece:": "area",
+        "Área a la que pertenece": "area",
+        "Area a la que pertenece:": "area",
+        "Area a la que pertenece": "area",
+        "Botellas con amor\nSi = Otro (Indique peso kg)": "botellas",
+        "Botellas con amor\nSi = Otro (Indique peso kg)": "botellas",
+        "Botellas con amor": "botellas",
+        "Botellas": "botellas",
+        "Tapas para sanar\nSi = Otro (Indique peso kg)": "tapas",
+        "Tapas para sanar": "tapas",
+        "Tapas": "tapas",
+        "Aceite Green Fuel\nSi = Otro (Indique peso kg)": "aceite",
+        "Aceite Green Fuel": "aceite",
+        "Aceite": "aceite",
+    }
+    # Aplicar renombrado solo para columnas presentes
+    rename_map = {k: v for k, v in rename_manual.items() if k in df.columns}
     if rename_map:
         df = df.rename(columns=rename_map)
-    # Check required columns
-    if "area" not in df.columns:
-        raise KeyError(f"No se detectó la columna 'area'. Columnas disponibles: {list(df.columns)}")
-    # Parse timestamp if present
+    # Mostrar columnas detectadas (útil para depuración)
+    df.columns = [c.strip() for c in df.columns]
+    # Normalizar timestamp si existe
     if "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"], dayfirst=True, errors="coerce")
-    # Ensure numeric columns exist and coerce to numeric (kg)
+    # Coercionar columnas numéricas (tratando "No" como NaN)
     for col in ["botellas", "tapas", "aceite"]:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col].replace({"No": np.nan, "no": np.nan, "": np.nan}), errors="coerce")
+            df[col] = df[col].replace({"No": np.nan, "no": np.nan, "NO": np.nan}).astype(str).str.strip()
+            # Convertir valores que contienen texto como "3 con" a números si es posible
+            df[col] = df[col].replace(r'[^0-9\.\-]+', '', regex=True)
+            df[col] = pd.to_numeric(df[col], errors="coerce")
         else:
             df[col] = np.nan
-    # Fill NaN with 0 for aggregation (but keep NaN for row-level display)
+    # Campos auxiliares para agregación
     df["_botellas_kg"] = df["botellas"].fillna(0).astype(float)
     df["_tapas_kg"] = df["tapas"].fillna(0).astype(float)
     df["_aceite_kg"] = df["aceite"].fillna(0).astype(float)
-    # Total kg per registro
     df["total_kg"] = df[["_botellas_kg", "_tapas_kg", "_aceite_kg"]].sum(axis=1)
     return df
 
-# ─── Sidebar: fuente de datos y URL ─────────────────────────────────────────
+# ─── Sidebar: URL y opciones ────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## Fuente de datos")
-    st.markdown("Lee la hoja pública de Google Sheets (export CSV).")
     default_url = "https://docs.google.com/spreadsheets/d/1fBG1FJuFwly_k6_HSwtP56eyoMehPAVrJlRbbfR8oGk/export?format=csv"
     gsheet_url = st.text_input("URL export CSV de Google Sheets", value=default_url)
     st.markdown("---")
     st.markdown("### Opciones de visualización")
-    show_map_heat = st.checkbox("Mostrar mapa de calor Área × Tipo (heatmap)", value=True)
-    group_by_area = st.checkbox("Agrupar por Área por defecto", value=True)
+    show_heatmap = st.checkbox("Mostrar mapa de calor Área × Tipo", value=True)
+    show_evolution = st.checkbox("Mostrar evolución temporal (si hay timestamp)", value=True)
+    st.markdown("---")
+    st.caption("Asegúrate de que la hoja sea accesible: 'Cualquiera con el enlace puede ver'.")
 
 # ─── Cargar datos ───────────────────────────────────────────────────────────
 try:
-    raw = load_gsheet_csv(gsheet_url)
+    df = load_and_prepare_gsheet(gsheet_url)
 except Exception as e:
-    st.error(f"No se pudo leer la hoja de Google Sheets: {e}")
+    st.error(f"No se pudo leer la hoja: {e}")
     st.stop()
 
-try:
-    df = process_campaign_df(raw)
-except KeyError as ke:
-    st.error(str(ke))
+# Mostrar columnas detectadas para confirmar mapeo
+st.sidebar.markdown("**Columnas detectadas en la hoja:**")
+st.sidebar.write(list(df.columns))
+
+# Validar columnas mínimas
+required = ["area"]
+missing = [r for r in required if r not in df.columns]
+if missing:
+    st.error(f"No se detectó la(s) columna(s) requerida(s): {missing}. Revisa los encabezados o ajusta el mapeo.")
     st.stop()
 
-if df.empty:
-    st.warning("No hay registros en la hoja.")
-    st.stop()
-
-# ─── KPIs ───────────────────────────────────────────────────────────────────
-st.markdown('<div class="section-title">Resumen general</div>', unsafe_allow_html=True)
+# ─── Preparar agregados y KPIs ──────────────────────────────────────────────
+df_displayable = df.copy()
+if "timestamp" in df_displayable.columns:
+    df_displayable["timestamp_str"] = df_displayable["timestamp"].dt.strftime("%d/%m/%Y %H:%M:%S")
 
 total_botellas = df["_botellas_kg"].sum()
 total_tapas = df["_tapas_kg"].sum()
@@ -136,13 +131,14 @@ total_kg = df["total_kg"].sum()
 n_registros = len(df)
 n_areas = df["area"].nunique()
 
+st.markdown('<div class="section-title">Resumen general</div>', unsafe_allow_html=True)
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Registros", f"{n_registros}")
 col2.metric("Áreas", f"{n_areas}")
 col3.metric("Total recolectado (kg)", f"{total_kg:.1f} kg")
-col4.metric("Tipos (Bot/Tap/Ace)", f"{total_botellas:.1f} / {total_tapas:.1f} / {total_aceite:.1f} kg")
+col4.metric("Bot / Tap / Ace (kg)", f"{total_botellas:.1f} / {total_tapas:.1f} / {total_aceite:.1f} kg")
 
-# ─── Gráfica 1: barras por tipo total ────────────────────────────────────────
+# ─── Recolección por tipo ───────────────────────────────────────────────────
 st.markdown('<div class="section-title">Recolección por tipo</div>', unsafe_allow_html=True)
 type_totals = pd.DataFrame({
     "tipo": ["Botellas (kg)", "Tapas (kg)", "Aceite (kg)"],
@@ -155,7 +151,7 @@ fig_types.update_traces(texttemplate="%{text:.1f}", textposition="outside")
 fig_types.update_layout(showlegend=False, yaxis_title="Kg", xaxis_title="")
 st.plotly_chart(fig_types, use_container_width=True)
 
-# ─── Gráfica 2: barras por área (apiladas por tipo) ────────────────────────
+# ─── Recolección por área (apilada) ────────────────────────────────────────
 st.markdown('<div class="section-title">Recolección por Área (apilada)</div>', unsafe_allow_html=True)
 area_agg = df.groupby("area").agg({
     "_botellas_kg": "sum",
@@ -173,9 +169,9 @@ else:
     fig_area.update_layout(barmode="stack", title="Recolección por Área y tipo (kg)", xaxis_title="", yaxis_title="Kg", height=420)
     st.plotly_chart(fig_area, use_container_width=True)
 
-# ─── Gráfica 3: evolución temporal (si hay timestamp) ──────────────────────
+# ─── Evolución temporal ─────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Evolución temporal</div>', unsafe_allow_html=True)
-if "timestamp" in df.columns and df["timestamp"].notna().any():
+if show_evolution and "timestamp" in df.columns and df["timestamp"].notna().any():
     evo = df.set_index("timestamp").resample("D").sum()[["_botellas_kg", "_tapas_kg", "_aceite_kg"]].reset_index()
     evo_melt = evo.melt(id_vars="timestamp", value_vars=["_botellas_kg", "_tapas_kg", "_aceite_kg"],
                         var_name="tipo", value_name="kg")
@@ -185,14 +181,12 @@ if "timestamp" in df.columns and df["timestamp"].notna().any():
     fig_evo.update_layout(xaxis_title="Fecha", yaxis_title="Kg", legend_title="Tipo")
     st.plotly_chart(fig_evo, use_container_width=True)
 else:
-    st.info("No hay marca temporal válida para mostrar evolución temporal.")
+    st.info("No hay marca temporal válida para mostrar evolución temporal o la opción está desactivada.")
 
-# ─── Gráfica 4: mapa de calor Área × Tipo ───────────────────────────────────
-if show_map_heat:
-    st.markdown('<div class="section-title">Mapa de calor: cumplimiento Área × Tipo (kg)</div>', unsafe_allow_html=True)
+# ─── Mapa de calor Área × Tipo ──────────────────────────────────────────────
+if show_heatmap:
+    st.markdown('<div class="section-title">Mapa de calor: Kg recolectados por Área y Tipo</div>', unsafe_allow_html=True)
     heat = area_agg.set_index("area")[["_botellas_kg", "_tapas_kg", "_aceite_kg"]].fillna(0)
-    # Reorder columns for display
-    heat = heat[["_botellas_kg", "_tapas_kg", "_aceite_kg"]]
     heat.columns = ["Botellas (kg)", "Tapas (kg)", "Aceite (kg)"]
     if heat.empty:
         st.info("No hay datos para el mapa de calor.")
@@ -212,17 +206,24 @@ if show_map_heat:
 
 # ─── Tabla detallada (Plotly) ───────────────────────────────────────────────
 st.markdown('<div class="section-title">Registros detallados</div>', unsafe_allow_html=True)
-display_cols = ["timestamp", "nombre", "area", "botellas", "tapas", "aceite", "total_kg"]
-display_cols = [c for c in display_cols if c in df.columns or c in ["total_kg"]]
+display_cols = []
+if "timestamp" in df.columns:
+    display_cols.append("timestamp")
+if "nombre" in df.columns:
+    display_cols.append("nombre")
+display_cols.append("area")
+for c in ["botellas", "tapas", "aceite", "total_kg"]:
+    if c in df.columns or c == "total_kg":
+        display_cols.append(c)
+
 df_table = df.copy()
-# Format timestamp for display
 if "timestamp" in df_table.columns:
     df_table["timestamp"] = df_table["timestamp"].dt.strftime("%d/%m/%Y %H:%M:%S")
-# Ensure display columns exist
-for c in ["botellas", "tapas", "aceite"]:
+# Convert numeric columns to string for display
+for c in ["botellas", "tapas", "aceite", "total_kg"]:
     if c in df_table.columns:
-        df_table[c] = df_table[c].astype(str).fillna("")
-# Build Plotly table
+        df_table[c] = df_table[c].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "")
+
 header_vals = [col.capitalize().replace("_", " ") for col in display_cols]
 cell_vals = [df_table[col].astype(str).fillna("") .tolist() for col in display_cols]
 
@@ -256,3 +257,4 @@ st.download_button("⬇️ Descargar Excel (registros + resumen)", data=excel_by
 
 st.markdown("---")
 st.caption("Dashboard de campañas ambientales — visualización de recolección por Botellas, Tapas y Aceite")
+
