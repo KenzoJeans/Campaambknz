@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from io import BytesIO
 from plotly.subplots import make_subplots
 import re
+import requests
 
 # ─── Configuración de la página ─────────────────────────────────────────────
 st.set_page_config(
@@ -15,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ─── Estilos (adaptados del código original) ────────────────────────────────
+# ─── Estilos ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap');
@@ -35,19 +36,21 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ─── URLs de Google Sheets (export CSV) ─────────────────────────────────────
+# ─── IDs por defecto (los que indicaste) ────────────────────────────────────
 GSHEET_PLANTA_ID = "1fBG1FJuFwly_k6_HSwtP56eyoMehPAVrJlRbbfR8oGk"
 GSHEET_TIENDAS_ID = "1S3q6Gzz-2DAmcdSSBbd5b6P82tb3SGgBexqkObmIG5Q"
 
-GSHEET_PLANTA_CSV = f"https://docs.google.com/spreadsheets/d/{GSHEET_PLANTA_ID}/export?format=csv"
-GSHEET_TIENDAS_CSV = f"https://docs.google.com/spreadsheets/d/{GSHEET_TIENDAS_ID}/export?format=csv"
+def build_export_url(sheet_id: str, gid: str = None) -> str:
+    base = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    if gid:
+        return f"{base}&gid={gid}"
+    return base
 
 # ─── Utilidades ────────────────────────────────────────────────────────────
 def normalize_col(c: str) -> str:
     return str(c).strip().lower()
 
 def find_campaign_cols(df_cols):
-    """Detecta columnas de Botellas, Tapas y Aceite por coincidencia parcial."""
     mapping = {"botellas": None, "tapas": None, "aceite": None}
     for c in df_cols:
         cn = normalize_col(c)
@@ -60,63 +63,91 @@ def find_campaign_cols(df_cols):
     return mapping
 
 def extract_numeric_weight(val):
-    """Intenta extraer un número (kg) de una celda; si no hay, devuelve 0."""
     if pd.isna(val):
         return 0.0
-    # Si ya es numérico
     try:
         return float(val)
     except Exception:
         s = str(val)
-        # Buscar números con coma o punto
         m = re.search(r"(\d+[.,]?\d*)", s)
         if m:
             return float(m.group(1).replace(",", "."))
     return 0.0
 
+# ─── Lectura robusta de Google Sheets (con requests para depuración) ───────
 @st.cache_data
 def load_gsheet_csv(url: str) -> pd.DataFrame:
-    df = pd.read_csv(url)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    resp = requests.get(url, headers=headers, timeout=15)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Error al descargar CSV. status_code={resp.status_code}. URL: {url}")
+    text = resp.text
+    if text.lstrip().startswith("<"):
+        snippet = text[:1000].replace("\n", " ")
+        raise RuntimeError(f"El contenido descargado parece HTML (posible página de login). Fragmento: {snippet}")
+    from io import StringIO
+    df = pd.read_csv(StringIO(text))
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
-# ─── Sidebar global ────────────────────────────────────────────────────────
+# ─── Sidebar: permitir URL personalizada y mostrar errores ─────────────────
 with st.sidebar:
     st.markdown("## 🌿 Panel de control — Campañas Ambientales")
     st.markdown("---")
-    st.markdown("Selecciona opciones de visualización y filtros para ambas pestañas.")
-    st.markdown("**Nota:** se omite la columna de Marca temporal automáticamente.")
+    st.markdown("Si la lectura automática falla, pega aquí la URL de exportación CSV (export?format=csv&gid=...).")
+    default_planta_url = build_export_url(GSHEET_PLANTA_ID)
+    default_tiendas_url = build_export_url(GSHEET_TIENDAS_ID)
+    gsheet_planta_url = st.text_input("URL CSV Planta", value=default_planta_url)
+    gsheet_tiendas_url = st.text_input("URL CSV Tiendas", value=default_tiendas_url)
     st.markdown("---")
+    st.caption("Asegúrate de que la hoja sea visible para 'Cualquiera con el enlace' o publica la hoja.")
 
-# ─── Cargar datos (intentar leer ambos Google Sheets) ───────────────────────
-load_error_msgs = []
-try:
-    df_planta_raw = load_gsheet_csv(GSHEET_PLANTA_CSV)
-except Exception as e:
-    df_planta_raw = pd.DataFrame()
-    load_error_msgs.append(f"No se pudo leer Planta: {e}")
+# ─── Cargar datos con manejo de errores y mensajes claros ──────────────────
+load_errors = []
+def try_load(url):
+    try:
+        df = load_gsheet_csv(url)
+        return df, None
+    except Exception as e:
+        return pd.DataFrame(), str(e)
 
-try:
-    df_tiendas_raw = load_gsheet_csv(GSHEET_TIENDAS_CSV)
-except Exception as e:
-    df_tiendas_raw = pd.DataFrame()
-    load_error_msgs.append(f"No se pudo leer Tiendas: {e}")
+df_planta_raw, err_p = try_load(gsheet_planta_url)
+if err_p:
+    if "gid=" not in gsheet_planta_url:
+        try_url = build_export_url(GSHEET_PLANTA_ID, gid="0")
+        df_planta_raw, err_p2 = try_load(try_url)
+        if err_p2:
+            load_errors.append(("Planta", err_p2))
+        else:
+            gsheet_planta_url = try_url
+    else:
+        load_errors.append(("Planta", err_p))
 
-if load_error_msgs:
-    for m in load_error_msgs:
-        st.sidebar.error(m)
+df_tiendas_raw, err_t = try_load(gsheet_tiendas_url)
+if err_t:
+    if "gid=" not in gsheet_tiendas_url:
+        try_url = build_export_url(GSHEET_TIENDAS_ID, gid="0")
+        df_tiendas_raw, err_t2 = try_load(try_url)
+        if err_t2:
+            load_errors.append(("Tiendas", err_t2))
+        else:
+            gsheet_tiendas_url = try_url
+    else:
+        load_errors.append(("Tiendas", err_t))
+
+if load_errors:
+    for source, msg in load_errors:
+        st.sidebar.error(f"{source}: {msg}")
 
 # ─── Preparar y limpiar cada dataset ────────────────────────────────────────
 def prepare_planta(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     cols = df.columns.tolist()
-    # Eliminar columna de marca temporal si existe
     for c in cols:
         if "marca temporal" in normalize_col(c) or "timestamp" in normalize_col(c):
             df = df.drop(columns=[c])
             break
-    # Detectar columnas de nombre y área
     name_col = None
     area_col = None
     for c in df.columns:
@@ -125,16 +156,13 @@ def prepare_planta(df: pd.DataFrame) -> pd.DataFrame:
             name_col = c
         if ("área" in cn or "area" in cn or "pertenece" in cn) and area_col is None:
             area_col = c
-    # Heurística si no se detectan
     remaining = [c for c in df.columns if c not in ([name_col] if name_col else []) + ([area_col] if area_col else [])]
     if name_col is None and len(remaining) >= 1:
         name_col = remaining[0]
     if area_col is None and len(remaining) >= 2:
         area_col = remaining[1]
-    if area_col is None and len(remaining) >= 1:
-        # fallback: tomar la segunda columna del df original si existe
-        area_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
-
+    if area_col is None and len(df.columns) > 1:
+        area_col = df.columns[1]
     camp_map = find_campaign_cols(df.columns)
     df_proc = pd.DataFrame()
     df_proc["nombre"] = df[name_col].astype(str).fillna("Sin nombre") if name_col in df.columns else "Sin nombre"
@@ -186,12 +214,10 @@ with tab1:
     if df_planta.empty:
         st.warning("No hay datos disponibles para Planta.")
     else:
-        # Filtros específicos
         areas = sorted(df_planta["area"].dropna().unique().tolist())
         sel_areas = st.multiselect("Filtrar por Área", options=areas, default=areas)
         dfp = df_planta[df_planta["area"].isin(sel_areas)].copy()
 
-        # --- KPIs (asegurar que las columnas existen antes de usarlas) ---
         if dfp.empty:
             st.info("No hay registros después de aplicar filtros.")
         else:
@@ -201,9 +227,7 @@ with tab1:
             avg_kg_por_persona = float(grouped_person.mean()) if n_personas > 0 else 0.0
             n_registros = len(dfp)
 
-            # Crear exactamente 4 columnas y usarlas inmediatamente
             col1, col2, col3, col4 = st.columns(4)
-
             col1.markdown(
                 f'<div class="kpi-card"><div class="kpi-label">Total recolectado (kg)</div>'
                 f'<div class="kpi-value">{total_kg:.1f} kg</div></div>',
@@ -225,7 +249,7 @@ with tab1:
                 unsafe_allow_html=True
             )
 
-        # Rankings Top 10 por persona para cada campaña
+        # Rankings Top 10 por persona
         st.markdown('<div class="section-title">Ranking Top 10 por persona (kg) — Planta</div>', unsafe_allow_html=True)
         campaigns = [("botellas", "Botellas con amor"), ("tapas", "Tapas para sanar"), ("aceite", "Aceite Green Fuel")]
         cols = st.columns(3)
@@ -241,7 +265,7 @@ with tab1:
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
                     st.plotly_chart(fig, use_container_width=True)
 
-        # Rankings Top 10 por área para cada campaña
+        # Rankings Top 10 por área
         st.markdown('<div class="section-title">Ranking Top 10 por área (kg) — Planta</div>', unsafe_allow_html=True)
         cols2 = st.columns(3)
         for i, (key, label) in enumerate(campaigns):
@@ -304,12 +328,12 @@ with tab2:
 
     if df_tiendas.empty:
         st.warning("No hay datos disponibles para Tiendas.")
+        st.info("Si la hoja no es pública o requiere login, pega la URL de exportación CSV con gid en la barra lateral (ej: .../export?format=csv&gid=0).")
     else:
         tiendas = sorted(df_tiendas["tienda"].dropna().unique().tolist())
         sel_tiendas = st.multiselect("Filtrar por Tienda", options=tiendas, default=tiendas)
         dft = df_tiendas[df_tiendas["tienda"].isin(sel_tiendas)].copy()
 
-        # KPIs para Tiendas (asegurando columnas antes de usarlas)
         if dft.empty:
             st.info("No hay registros después de aplicar filtros en Tiendas.")
         else:
@@ -325,7 +349,7 @@ with tab2:
             c3.markdown(f'<div class="kpi-card"><div class="kpi-label">Tiendas registradas</div><div class="kpi-value">{n_tiendas}</div></div>', unsafe_allow_html=True)
             c4.markdown(f'<div class="kpi-card"><div class="kpi-label">Registros</div><div class="kpi-value">{n_registros_t}</div></div>', unsafe_allow_html=True)
 
-        # Ranking Top 10 por tienda para cada campaña
+        # Ranking Top 10 por tienda
         st.markdown('<div class="section-title">Ranking Top 10 por tienda (kg)</div>', unsafe_allow_html=True)
         campaigns = [("botellas", "Botellas con amor"), ("tapas", "Tapas para sanar"), ("aceite", "Aceite Green Fuel")]
         cols_t = st.columns(3)
