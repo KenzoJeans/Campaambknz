@@ -349,7 +349,7 @@ with tab2:
             c3.markdown(f'<div class="kpi-card"><div class="kpi-label">Tiendas registradas</div><div class="kpi-value">{n_tiendas}</div></div>', unsafe_allow_html=True)
             c4.markdown(f'<div class="kpi-card"><div class="kpi-label">Registros</div><div class="kpi-value">{n_registros_t}</div></div>', unsafe_allow_html=True)
 
-        # Ranking Top 10 por tienda
+        # Ranking Top 10 por tienda para cada campaña (siempre usar 'tienda' como eje)
         st.markdown('<div class="section-title">Ranking Top 10 por tienda (kg)</div>', unsafe_allow_html=True)
         campaigns = [("botellas", "Botellas con amor"), ("tapas", "Tapas para sanar"), ("aceite", "Aceite Green Fuel")]
         cols_t = st.columns(3)
@@ -364,29 +364,6 @@ with tab2:
                     fig.update_layout(height=380, margin=dict(l=80, r=20, t=40, b=20))
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
                     st.plotly_chart(fig, use_container_width=True)
-
-        # Ranking Top 10 por persona en Tiendas si existe columna de nombre en el raw
-        st.markdown('<div class="section-title">Ranking Top 10 por persona (kg) — Tiendas (si aplica)</div>', unsafe_allow_html=True)
-        name_col_candidates = [c for c in df_tiendas_raw.columns if "nombre" in normalize_col(c)]
-        if name_col_candidates:
-            name_col = name_col_candidates[0]
-            df_names = df_tiendas_raw[[name_col]].copy()
-            df_names.columns = ["nombre_raw"]
-            df_names["nombre"] = df_names["nombre_raw"].astype(str).fillna("Sin nombre")
-            df_names = df_names.reset_index(drop=True)
-            dft_idx = dft.reset_index(drop=True)
-            if len(df_names) == len(dft_idx):
-                dft_idx["nombre"] = df_names["nombre"]
-                for i, (key, label) in enumerate(campaigns):
-                    grp = dft_idx.groupby("nombre")[key].sum().reset_index().sort_values(key, ascending=False).head(10)
-                    fig = px.bar(grp, x=key, y="nombre", orientation="h", text=key, title=f"Top 10 personas — {label}")
-                    fig.update_layout(height=300, margin=dict(l=80, r=20, t=30, b=20))
-                    fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
-                    st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No fue posible alinear nombres con los registros de Tiendas para ranking por persona.")
-        else:
-            st.info("No se detectó columna de Nombre en la fuente Tiendas para ranking por persona.")
 
         # Pie chart total por campaña en Tiendas
         st.markdown('<div class="section-title">Distribución total (kg) por campaña — Tiendas</div>', unsafe_allow_html=True)
