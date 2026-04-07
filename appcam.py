@@ -76,7 +76,6 @@ def extract_numeric_weight(val):
     return 0.0
 
 # ─── Lectura robusta de Google Sheets (con cache control) ────────────────
-# Usamos cache pero el usuario puede forzar recarga añadiendo un parámetro "cache_bust" en la URL.
 @st.cache_data
 def load_gsheet_csv(url: str) -> pd.DataFrame:
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -84,7 +83,6 @@ def load_gsheet_csv(url: str) -> pd.DataFrame:
     if resp.status_code != 200:
         raise RuntimeError(f"Error al descargar CSV. status_code={resp.status_code}. URL: {url}")
     text = resp.text
-    # Si el contenido parece HTML (login), lanzar excepción con fragmento para depuración
     if text.lstrip().startswith("<"):
         snippet = text[:1000].replace("\n", " ")
         raise RuntimeError(f"El contenido descargado parece HTML (posible página de login). Fragmento: {snippet}")
@@ -104,7 +102,6 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Asegúrate de que la hoja sea visible para 'Cualquiera con el enlace' o publica la hoja.")
     st.markdown("---")
-    # Botones para forzar recarga (cache-bust)
     if "planta_cache_bust" not in st.session_state:
         st.session_state.planta_cache_bust = ""
     if "tiendas_cache_bust" not in st.session_state:
@@ -123,13 +120,11 @@ def try_load(url):
     except Exception as e:
         return pd.DataFrame(), str(e)
 
-# Construir URLs efectivas (añadir cache_bust si el usuario lo solicitó)
 planta_url_effective = gsheet_planta_url + st.session_state.get("planta_cache_bust", "")
 tiendas_url_effective = gsheet_tiendas_url + st.session_state.get("tiendas_cache_bust", "")
 
 df_planta_raw, err_p = try_load(planta_url_effective)
 if err_p:
-    # Intentar con gid=0 si no se proporcionó gid explícito y no se forzó cache bust
     if "gid=" not in gsheet_planta_url:
         try_url = build_export_url(GSHEET_PLANTA_ID, gid="0") + st.session_state.get("planta_cache_bust", "")
         df_planta_raw, err_p2 = try_load(try_url)
@@ -152,7 +147,6 @@ if err_t:
     else:
         load_errors.append(("Tiendas", err_t))
 
-# Mostrar errores en sidebar (si los hay)
 if load_errors:
     for source, msg in load_errors:
         st.sidebar.error(f"{source}: {msg}")
@@ -162,12 +156,10 @@ def prepare_planta(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     cols = df.columns.tolist()
-    # Eliminar columna de marca temporal si existe
     for c in cols:
         if "marca temporal" in normalize_col(c) or "timestamp" in normalize_col(c):
             df = df.drop(columns=[c])
             break
-    # Detectar columnas de nombre y área
     name_col = None
     area_col = None
     for c in df.columns:
@@ -270,7 +262,7 @@ with tab1:
                 unsafe_allow_html=True
             )
 
-        # Rankings Top 10 por persona
+        # Rankings Top 10 por persona (orden descendente: mayor arriba)
         st.markdown('<div class="section-title">Ranking Top 10 por persona (kg) — Planta</div>', unsafe_allow_html=True)
         campaigns = [("botellas", "Botellas con amor"), ("tapas", "Tapas para sanar"), ("aceite", "Aceite Green Fuel")]
         cols = st.columns(3)
@@ -282,11 +274,12 @@ with tab1:
                 else:
                     fig = px.bar(grp, x=key, y="nombre", orientation="h", text=key,
                                  labels={key: "Kg", "nombre": "Persona"}, title=f"Top 10 personas — {label}")
-                    fig.update_layout(height=380, margin=dict(l=80, r=20, t=40, b=20))
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+                    fig.update_layout(height=380, margin=dict(l=80, r=20, t=40, b=20))
+                    fig.update_yaxes(autorange="reversed")
                     st.plotly_chart(fig, use_container_width=True)
 
-        # Rankings Top 10 por área
+        # Rankings Top 10 por área (orden descendente: mayor arriba)
         st.markdown('<div class="section-title">Ranking Top 10 por área (kg) — Planta</div>', unsafe_allow_html=True)
         cols2 = st.columns(3)
         for i, (key, label) in enumerate(campaigns):
@@ -297,8 +290,9 @@ with tab1:
                 else:
                     fig = px.bar(grp, x=key, y="area", orientation="h", text=key,
                                  labels={key: "Kg", "area": "Área"}, title=f"Top 10 áreas — {label}")
-                    fig.update_layout(height=380, margin=dict(l=80, r=20, t=40, b=20))
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+                    fig.update_layout(height=380, margin=dict(l=80, r=20, t=40, b=20))
+                    fig.update_yaxes(autorange="reversed")
                     st.plotly_chart(fig, use_container_width=True)
 
         # Heatmap: área vs campañas (suma de kg)
@@ -361,7 +355,7 @@ with tab2:
             c3.markdown(f'<div class="kpi-card"><div class="kpi-label">Tiendas registradas</div><div class="kpi-value">{n_tiendas}</div></div>', unsafe_allow_html=True)
             c4.markdown(f'<div class="kpi-card"><div class="kpi-label">Registros</div><div class="kpi-value">{n_registros_t}</div></div>', unsafe_allow_html=True)
 
-        # Ranking Top 10 por tienda para cada campaña (siempre usar 'tienda' como eje)
+        # Ranking Top 10 por tienda para cada campaña (orden descendente: mayor arriba)
         st.markdown('<div class="section-title">Ranking Top 10 por tienda (kg)</div>', unsafe_allow_html=True)
         campaigns = [("botellas", "Botellas con amor"), ("tapas", "Tapas para sanar"), ("aceite", "Aceite Green Fuel")]
         cols_t = st.columns(3)
@@ -373,8 +367,9 @@ with tab2:
                 else:
                     fig = px.bar(grp, x=key, y="tienda", orientation="h", text=key,
                                  labels={key: "Kg", "tienda": "Tienda"}, title=f"Top 10 tiendas — {label}")
-                    fig.update_layout(height=380, margin=dict(l=80, r=20, t=40, b=20))
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+                    fig.update_layout(height=380, margin=dict(l=80, r=20, t=40, b=20))
+                    fig.update_yaxes(autorange="reversed")
                     st.plotly_chart(fig, use_container_width=True)
 
         # Heatmap: tienda vs campañas (suma de kg)
