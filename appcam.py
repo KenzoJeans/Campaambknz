@@ -242,7 +242,7 @@ tab1, tab2 = st.tabs(["Campañas Ambientales Planta", "Campañas Ambientales Tie
 
 # ------------------ PESTAÑA 1: PLANTA --------------------------------------
 with tab1:
-    st.markdown('<div class="main-header"><h1>Campañas Ambientales — Planta</h1></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header"><h1>Campañas Ambientales — Planta 🏢</h1></div>', unsafe_allow_html=True)
 
     if df_planta.empty:
         st.warning("No hay datos disponibles para Planta.")
@@ -373,7 +373,7 @@ with tab1:
 
 # ------------------ PESTAÑA 2: TIENDAS -------------------------------------
 with tab2:
-    st.markdown('<div class="main-header"><h1>Campañas Ambientales — Tiendas</h1></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header"><h1>Campañas Ambientales — Tiendas 🏪</h1></div>', unsafe_allow_html=True)
 
     if df_tiendas.empty:
         st.warning("No hay datos disponibles para Tiendas.")
