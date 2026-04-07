@@ -366,10 +366,10 @@ with tab2:
                     st.plotly_chart(fig, use_container_width=True)
 
         # Pie chart total por campaña en Tiendas
-        st.markdown('<div class="section-title">Distribución total (kg) por campaña — Tiendas</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Distribución total (kg) por campaña</div>', unsafe_allow_html=True)
         totals_t = {"Botellas": dft["botellas"].sum(), "Tapas": dft["tapas"].sum(), "Aceite": dft["aceite"].sum()}
         pie_df_t = pd.DataFrame({"campaña": list(totals_t.keys()), "kg": list(totals_t.values())})
-        fig_pie_t = px.pie(pie_df_t, names="campaña", values="kg", title="Kg recolectados por campaña (Tiendas)", hole=0.4,
+        fig_pie_t = px.pie(pie_df_t, names="campaña", values="kg", title="Kg recolectados por campaña", hole=0.4,
                            color="campaña", color_discrete_map={"Botellas":"#2e9e5b","Tapas":"#f59e0b","Aceite":"#ef4444"})
         fig_pie_t.update_traces(textinfo="percent+label")
         st.plotly_chart(fig_pie_t, use_container_width=True)
