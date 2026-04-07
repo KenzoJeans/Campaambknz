@@ -37,7 +37,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ─── IDs por defecto (los que indicaste) ────────────────────────────────────
+# ─── IDs por defecto (Google Sheets) ────────────────────────────────────────
 GSHEET_PLANTA_ID = "1fBG1FJuFwly_k6_HSwtP56eyoMehPAVrJlRbbfR8oGk"
 GSHEET_TIENDAS_ID = "1S3q6Gzz-2DAmcdSSBbd5b6P82tb3SGgBexqkObmIG5Q"
 
@@ -75,7 +75,27 @@ def extract_numeric_weight(val):
             return float(m.group(1).replace(",", "."))
     return 0.0
 
-# ─── Lectura robusta de Google Sheets (con cache control) ────────────────
+def detect_date_column(cols):
+    for c in cols:
+        cn = normalize_col(c)
+        if "marca temporal" in cn or "timestamp" in cn or "fecha" in cn or "date" in cn:
+            return c
+    return None
+
+def parse_dates_robust(series: pd.Series) -> pd.Series:
+    """
+    Parse a series of date-like strings robustly.
+    Try dayfirst=True first; if many NaT, try dayfirst=False and pick the best.
+    """
+    parsed = pd.to_datetime(series, dayfirst=True, errors="coerce")
+    nat_ratio = parsed.isna().mean()
+    if nat_ratio > 0.3:
+        parsed_alt = pd.to_datetime(series, dayfirst=False, errors="coerce")
+        if parsed_alt.isna().mean() < nat_ratio:
+            parsed = parsed_alt
+    return parsed
+
+# ─── Lectura robusta de Google Sheets (requests + cache) ───────────────────
 @st.cache_data
 def load_gsheet_csv(url: str) -> pd.DataFrame:
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -112,7 +132,6 @@ with st.sidebar:
         st.session_state.tiendas_cache_bust = f"&cache_bust={int(time.time())}"
 
 # ─── Cargar datos con manejo de errores y mensajes claros ──────────────────
-load_errors = []
 def try_load(url):
     try:
         df = load_gsheet_csv(url)
@@ -129,11 +148,11 @@ if err_p:
         try_url = build_export_url(GSHEET_PLANTA_ID, gid="0") + st.session_state.get("planta_cache_bust", "")
         df_planta_raw, err_p2 = try_load(try_url)
         if err_p2:
-            load_errors.append(("Planta", err_p2))
+            st.sidebar.error(f"Planta: {err_p2}")
         else:
             planta_url_effective = try_url
     else:
-        load_errors.append(("Planta", err_p))
+        st.sidebar.error(f"Planta: {err_p}")
 
 df_tiendas_raw, err_t = try_load(tiendas_url_effective)
 if err_t:
@@ -141,31 +160,18 @@ if err_t:
         try_url = build_export_url(GSHEET_TIENDAS_ID, gid="0") + st.session_state.get("tiendas_cache_bust", "")
         df_tiendas_raw, err_t2 = try_load(try_url)
         if err_t2:
-            load_errors.append(("Tiendas", err_t2))
+            st.sidebar.error(f"Tiendas: {err_t2}")
         else:
             tiendas_url_effective = try_url
     else:
-        load_errors.append(("Tiendas", err_t))
+        st.sidebar.error(f"Tiendas: {err_t}")
 
-if load_errors:
-    for source, msg in load_errors:
-        st.sidebar.error(f"{source}: {msg}")
-
-# ─── Preparar y limpiar cada dataset (preservando índice y fecha) ────────
-def detect_date_column(cols):
-    for c in cols:
-        cn = normalize_col(c)
-        if "marca temporal" in cn or "timestamp" in cn or "fecha" in cn or "date" in cn:
-            return c
-    return None
-
+# ─── Preparar y limpiar cada dataset (preservando índice y fecha robusta) ─
 def prepare_planta(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     date_col = detect_date_column(df.columns.tolist())
-    # create processed df preserving original index
-    df_proc = pd.DataFrame(index=df.index)
-    # detect name and area using original columns (do not drop date)
+    # detect name and area
     name_col = None
     area_col = None
     for c in df.columns:
@@ -181,10 +187,9 @@ def prepare_planta(df: pd.DataFrame) -> pd.DataFrame:
         area_col = remaining[1]
     if area_col is None and len(df.columns) > 1:
         area_col = df.columns[1]
-    # assign name and area
+    df_proc = pd.DataFrame(index=df.index)
     df_proc["nombre"] = df[name_col].astype(str).fillna("Sin nombre") if name_col in df.columns else "Sin nombre"
     df_proc["area"] = df[area_col].astype(str).fillna("Sin área") if area_col in df.columns else "Sin área"
-    # campaigns
     camp_map = find_campaign_cols(df.columns)
     for key, col in camp_map.items():
         if col is not None and col in df.columns:
@@ -192,9 +197,11 @@ def prepare_planta(df: pd.DataFrame) -> pd.DataFrame:
         else:
             df_proc[key] = 0.0
     df_proc["total_kg"] = df_proc[["botellas", "tapas", "aceite"]].sum(axis=1)
-    # parse and attach fecha aligned to original index
+    # parse fecha robustly and attach aligned to original index
     if date_col and date_col in df.columns:
-        df_proc["fecha"] = pd.to_datetime(df[date_col], dayfirst=True, errors="coerce")
+        parsed = parse_dates_robust(df[date_col])
+        parsed.index = df.index
+        df_proc["fecha"] = parsed
     else:
         df_proc["fecha"] = pd.NaT
     return df_proc
@@ -203,7 +210,6 @@ def prepare_tiendas(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     date_col = detect_date_column(df.columns.tolist())
-    df_proc = pd.DataFrame(index=df.index)
     tienda_col = None
     for c in df.columns:
         if "tienda" in normalize_col(c):
@@ -211,6 +217,7 @@ def prepare_tiendas(df: pd.DataFrame) -> pd.DataFrame:
             break
     if tienda_col is None:
         tienda_col = df.columns[0]
+    df_proc = pd.DataFrame(index=df.index)
     df_proc["tienda"] = df[tienda_col].astype(str).fillna("Sin tienda")
     camp_map = find_campaign_cols(df.columns)
     for key, col in camp_map.items():
@@ -220,7 +227,9 @@ def prepare_tiendas(df: pd.DataFrame) -> pd.DataFrame:
             df_proc[key] = 0.0
     df_proc["total_kg"] = df_proc[["botellas", "tapas", "aceite"]].sum(axis=1)
     if date_col and date_col in df.columns:
-        df_proc["fecha"] = pd.to_datetime(df[date_col], dayfirst=True, errors="coerce")
+        parsed = parse_dates_robust(df[date_col])
+        parsed.index = df.index
+        df_proc["fecha"] = parsed
     else:
         df_proc["fecha"] = pd.NaT
     return df_proc
@@ -246,8 +255,11 @@ with tab1:
             rango = st.date_input("Rango de fechas (Planta)", value=(min_f, max_f), min_value=min_f, max_value=max_f, key="rango_planta")
             if isinstance(rango, (list, tuple)) and len(rango) == 2:
                 start_date, end_date = rango[0], rango[1]
-                # filter inclusive between start_date and end_date
-                df_filtered = df_planta[(df_planta["fecha"].dt.date >= start_date) & (df_planta["fecha"].dt.date <= end_date)].copy()
+                # Ensure inclusive filtering and that we compare dates (not datetimes)
+                df_filtered = df_planta[
+                    (df_planta["fecha"].dt.date >= pd.to_datetime(start_date).date()) &
+                    (df_planta["fecha"].dt.date <= pd.to_datetime(end_date).date())
+                ].copy()
             else:
                 df_filtered = df_planta.copy()
         else:
@@ -374,7 +386,10 @@ with tab2:
             rango_t = st.date_input("Rango de fechas (Tiendas)", value=(min_f, max_f), min_value=min_f, max_value=max_f, key="rango_tiendas")
             if isinstance(rango_t, (list, tuple)) and len(rango_t) == 2:
                 start_date_t, end_date_t = rango_t[0], rango_t[1]
-                df_t_filtered = df_tiendas[(df_tiendas["fecha"].dt.date >= start_date_t) & (df_tiendas["fecha"].dt.date <= end_date_t)].copy()
+                df_t_filtered = df_tiendas[
+                    (df_tiendas["fecha"].dt.date >= pd.to_datetime(start_date_t).date()) &
+                    (df_tiendas["fecha"].dt.date <= pd.to_datetime(end_date_t).date())
+                ].copy()
             else:
                 df_t_filtered = df_tiendas.copy()
         else:
