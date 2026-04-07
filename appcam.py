@@ -55,7 +55,7 @@ def find_campaign_cols(df_cols):
             mapping["botellas"] = c
         if "tapa" in cn or "tapas" in cn:
             mapping["tapas"] = c
-        if "aceite" in cn or "green fuel" in cn or "aceite" in cn:
+        if "aceite" in cn or "green fuel" in cn:
             mapping["aceite"] = c
     return mapping
 
@@ -77,7 +77,6 @@ def extract_numeric_weight(val):
 @st.cache_data
 def load_gsheet_csv(url: str) -> pd.DataFrame:
     df = pd.read_csv(url)
-    # Normalizar nombres de columnas
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
@@ -111,74 +110,63 @@ if load_error_msgs:
 def prepare_planta(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-    # Column names esperados (según tu descripción)
-    # Marca temporal    Nombre: Área a la que pertenece:    "Botellas..."   "Tapas..."  "Aceite..."
-    # Eliminar columna de marca temporal si existe
     cols = df.columns.tolist()
-    cols_lower = [normalize_col(c) for c in cols]
-    # Buscar y eliminar "marca temporal" si aparece
-    for i, c in enumerate(cols_lower):
-        if "marca temporal" in c or "timestamp" in c or "marca" == c:
-            df = df.drop(columns=[cols[i]])
+    # Eliminar columna de marca temporal si existe
+    for c in cols:
+        if "marca temporal" in normalize_col(c) or "timestamp" in normalize_col(c):
+            df = df.drop(columns=[c])
             break
-    # Renombrar columnas clave si es necesario
-    # Intentar detectar columnas de nombre y área
+    # Detectar columnas de nombre y área
     name_col = None
     area_col = None
     for c in df.columns:
         cn = normalize_col(c)
-        if "nombre" in cn:
+        if "nombre" in cn and name_col is None:
             name_col = c
-        if "área" in cn or "area" in cn or "pertenece" in cn:
+        if ("área" in cn or "area" in cn or "pertenece" in cn) and area_col is None:
             area_col = c
-    # Si no se detectan, intentar heurística
-    if name_col is None and len(df.columns) >= 1:
-        name_col = df.columns[0]
-    if area_col is None and len(df.columns) >= 2:
-        # buscar segunda columna que no sea nombre
-        for c in df.columns:
-            if c != name_col:
-                area_col = c
-                break
-    # Detectar columnas de campañas
+    # Heurística si no se detectan
+    remaining = [c for c in df.columns if c not in ([name_col] if name_col else []) + ([area_col] if area_col else [])]
+    if name_col is None and len(remaining) >= 1:
+        name_col = remaining[0]
+    if area_col is None and len(remaining) >= 2:
+        area_col = remaining[1]
+    if area_col is None and len(remaining) >= 1:
+        # fallback: tomar la segunda columna del df original si existe
+        area_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
+
     camp_map = find_campaign_cols(df.columns)
-    # Crear dataframe con pesos numéricos
     df_proc = pd.DataFrame()
-    df_proc["nombre"] = df[name_col].astype(str).fillna("Sin nombre")
-    df_proc["area"] = df[area_col].astype(str).fillna("Sin área")
+    df_proc["nombre"] = df[name_col].astype(str).fillna("Sin nombre") if name_col in df.columns else "Sin nombre"
+    df_proc["area"] = df[area_col].astype(str).fillna("Sin área") if area_col in df.columns else "Sin área"
     for key, col in camp_map.items():
-        if col is not None:
+        if col is not None and col in df.columns:
             df_proc[key] = df[col].apply(extract_numeric_weight)
         else:
             df_proc[key] = 0.0
-    # Total recolectado por fila
     df_proc["total_kg"] = df_proc[["botellas", "tapas", "aceite"]].sum(axis=1)
     return df_proc
 
 def prepare_tiendas(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-    # Eliminar marca temporal
     cols = df.columns.tolist()
     for c in cols:
         if "marca temporal" in normalize_col(c) or "timestamp" in normalize_col(c):
             df = df.drop(columns=[c])
             break
-    # Detectar tienda/nombre columna
     tienda_col = None
     for c in df.columns:
-        if "tienda" in normalize_col(c) or "tienda a la que pertenece" in normalize_col(c):
+        if "tienda" in normalize_col(c):
             tienda_col = c
             break
     if tienda_col is None:
-        # si no existe, tomar la primera columna
         tienda_col = df.columns[0]
-    # Detectar campañas
     camp_map = find_campaign_cols(df.columns)
     df_proc = pd.DataFrame()
     df_proc["tienda"] = df[tienda_col].astype(str).fillna("Sin tienda")
     for key, col in camp_map.items():
-        if col is not None:
+        if col is not None and col in df.columns:
             df_proc[key] = df[col].apply(extract_numeric_weight)
         else:
             df_proc[key] = 0.0
@@ -203,20 +191,42 @@ with tab1:
         sel_areas = st.multiselect("Filtrar por Área", options=areas, default=areas)
         dfp = df_planta[df_planta["area"].isin(sel_areas)].copy()
 
-        # KPIs
-        total_kg = dfp["total_kg"].sum()
-        avg_kg_por_persona = dfp.groupby("nombre")["total_kg"].sum().mean()
-        n_personas = dfp["nombre"].nunique()
-        n_registros = len(dfp)
+        # --- KPIs (asegurar que las columnas existen antes de usarlas) ---
+        if dfp.empty:
+            st.info("No hay registros después de aplicar filtros.")
+        else:
+            total_kg = dfp["total_kg"].sum()
+            grouped_person = dfp.groupby("nombre")["total_kg"].sum()
+            n_personas = int(grouped_person.size) if not grouped_person.empty else 0
+            avg_kg_por_persona = float(grouped_person.mean()) if n_personas > 0 else 0.0
+            n_registros = len(dfp)
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.markdown(f'<div class="kpi-card"><div class="kpi-label">Total recolectado (kg)</div><div class="kpi-value">{total_kg:.1f} kg</div></div>', unsafe_allow_html=True)
-        col2.markdown(f'<div class="kpi-card"><div class="kpi-label">Promedio por persona (kg)</div><div class="kpi-value">{avg_kg_por_persona:.2f}</div></div>', unsafe_allow_html=True)
-        col3.markdown(f'<div class="kpi-card"><div class="kpi-label">Personas registradas</div><div class="kpi-value">{n_personas}</div></div>', unsafe_allow_html=True)
-        col4.markdown(f'<div class="kpi-card"><div class="kpi-label">Registros</div><div class="kpi-value">{n_registros}</div></div>', unsafe_allow_html=True)
+            # Crear exactamente 4 columnas y usarlas inmediatamente
+            col1, col2, col3, col4 = st.columns(4)
 
+            col1.markdown(
+                f'<div class="kpi-card"><div class="kpi-label">Total recolectado (kg)</div>'
+                f'<div class="kpi-value">{total_kg:.1f} kg</div></div>',
+                unsafe_allow_html=True
+            )
+            col2.markdown(
+                f'<div class="kpi-card"><div class="kpi-label">Promedio por persona (kg)</div>'
+                f'<div class="kpi-value">{avg_kg_por_persona:.2f}</div></div>',
+                unsafe_allow_html=True
+            )
+            col3.markdown(
+                f'<div class="kpi-card"><div class="kpi-label">Personas registradas</div>'
+                f'<div class="kpi-value">{n_personas}</div></div>',
+                unsafe_allow_html=True
+            )
+            col4.markdown(
+                f'<div class="kpi-card"><div class="kpi-label">Registros</div>'
+                f'<div class="kpi-value">{n_registros}</div></div>',
+                unsafe_allow_html=True
+            )
+
+        # Rankings Top 10 por persona para cada campaña
         st.markdown('<div class="section-title">Ranking Top 10 por persona (kg) — Planta</div>', unsafe_allow_html=True)
-        # Top 10 por persona para cada campaña
         campaigns = [("botellas", "Botellas con amor"), ("tapas", "Tapas para sanar"), ("aceite", "Aceite Green Fuel")]
         cols = st.columns(3)
         for i, (key, label) in enumerate(campaigns):
@@ -231,6 +241,7 @@ with tab1:
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
                     st.plotly_chart(fig, use_container_width=True)
 
+        # Rankings Top 10 por área para cada campaña
         st.markdown('<div class="section-title">Ranking Top 10 por área (kg) — Planta</div>', unsafe_allow_html=True)
         cols2 = st.columns(3)
         for i, (key, label) in enumerate(campaigns):
@@ -247,34 +258,29 @@ with tab1:
 
         # Pie chart total por campaña
         st.markdown('<div class="section-title">Distribución total (kg) por campaña — Planta</div>', unsafe_allow_html=True)
-        totals = {label: dfp[key].sum() for key, label in [("botellas", "Botellas"), ("tapas", "Tapas"), ("aceite", "Aceite")]}
+        totals = {"Botellas": dfp["botellas"].sum(), "Tapas": dfp["tapas"].sum(), "Aceite": dfp["aceite"].sum()}
         pie_df = pd.DataFrame({"campaña": list(totals.keys()), "kg": list(totals.values())})
         fig_pie = px.pie(pie_df, names="campaña", values="kg", title="Kg recolectados por campaña", hole=0.4,
                          color="campaña", color_discrete_map={"Botellas":"#2e9e5b","Tapas":"#f59e0b","Aceite":"#ef4444"})
         fig_pie.update_traces(textinfo="percent+label")
         st.plotly_chart(fig_pie, use_container_width=True)
 
-        # Gráficas adicionales adaptadas del código original
+        # Evolución temporal (si hay columna de fecha en el raw original)
         st.markdown('<div class="section-title">Evolución y distribución de registros — Planta</div>', unsafe_allow_html=True)
-        # Evolución temporal: si hay columna de fecha en el raw original, intentar usarla
-        # Buscamos en df_planta_raw una columna que contenga "fecha" o "marca temporal" (si existe)
         date_col = None
         for c in df_planta_raw.columns:
             if "fecha" in normalize_col(c) or "date" in normalize_col(c) or "marca temporal" in normalize_col(c) or "timestamp" in normalize_col(c):
                 date_col = c
                 break
         if date_col and date_col in df_planta_raw.columns:
-            # unir pesos con fechas
             df_dates = df_planta_raw[[date_col]].copy()
             df_dates.columns = ["fecha_raw"]
             df_dates["fecha"] = pd.to_datetime(df_dates["fecha_raw"], errors="coerce", dayfirst=True)
-            # concatenar con dfp (asumiendo mismo orden)
             df_dates = df_dates.reset_index(drop=True)
             dfp_idx = dfp.reset_index(drop=True)
             if len(df_dates) == len(dfp_idx):
                 dfp_idx["fecha"] = df_dates["fecha"]
             else:
-                # no coinciden longitudes; no usar
                 dfp_idx["fecha"] = pd.NaT
             evo = dfp_idx.groupby("fecha")["total_kg"].sum().reset_index()
             if evo["fecha"].notna().any():
@@ -303,21 +309,26 @@ with tab2:
         sel_tiendas = st.multiselect("Filtrar por Tienda", options=tiendas, default=tiendas)
         dft = df_tiendas[df_tiendas["tienda"].isin(sel_tiendas)].copy()
 
-        # KPIs
-        total_kg_t = dft["total_kg"].sum()
-        avg_kg_por_tienda = dft.groupby("tienda")["total_kg"].sum().mean()
-        n_tiendas = dft["tienda"].nunique()
-        n_registros_t = len(dft)
+        # KPIs para Tiendas (asegurando columnas antes de usarlas)
+        if dft.empty:
+            st.info("No hay registros después de aplicar filtros en Tiendas.")
+        else:
+            total_kg_t = dft["total_kg"].sum()
+            grouped_tienda = dft.groupby("tienda")["total_kg"].sum()
+            n_tiendas = int(grouped_tienda.size) if not grouped_tienda.empty else 0
+            avg_kg_por_tienda = float(grouped_tienda.mean()) if n_tiendas > 0 else 0.0
+            n_registros_t = len(dft)
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.markdown(f'<div class="kpi-card"><div class="kpi-label">Total recolectado (kg)</div><div class="kpi-value">{total_kg_t:.1f} kg</div></div>', unsafe_allow_html=True)
-        c2.markdown(f'<div class="kpi-card"><div class="kpi-label">Promedio por tienda (kg)</div><div class="kpi-value">{avg_kg_por_tienda:.2f}</div></div>', unsafe_allow_html=True)
-        c3.markdown(f'<div class="kpi-card"><div class="kpi-label">Tiendas registradas</div><div class="kpi-value">{n_tiendas}</div></div>', unsafe_allow_html=True)
-        c4.markdown(f'<div class="kpi-card"><div class="kpi-label">Registros</div><div class="kpi-value">{n_registros_t}</div></div>', unsafe_allow_html=True)
+            c1, c2, c3, c4 = st.columns(4)
+            c1.markdown(f'<div class="kpi-card"><div class="kpi-label">Total recolectado (kg)</div><div class="kpi-value">{total_kg_t:.1f} kg</div></div>', unsafe_allow_html=True)
+            c2.markdown(f'<div class="kpi-card"><div class="kpi-label">Promedio por tienda (kg)</div><div class="kpi-value">{avg_kg_por_tienda:.2f}</div></div>', unsafe_allow_html=True)
+            c3.markdown(f'<div class="kpi-card"><div class="kpi-label">Tiendas registradas</div><div class="kpi-value">{n_tiendas}</div></div>', unsafe_allow_html=True)
+            c4.markdown(f'<div class="kpi-card"><div class="kpi-label">Registros</div><div class="kpi-value">{n_registros_t}</div></div>', unsafe_allow_html=True)
 
+        # Ranking Top 10 por tienda para cada campaña
         st.markdown('<div class="section-title">Ranking Top 10 por tienda (kg)</div>', unsafe_allow_html=True)
-        cols_t = st.columns(3)
         campaigns = [("botellas", "Botellas con amor"), ("tapas", "Tapas para sanar"), ("aceite", "Aceite Green Fuel")]
+        cols_t = st.columns(3)
         for i, (key, label) in enumerate(campaigns):
             with cols_t[i]:
                 grp = dft.groupby("tienda")[key].sum().reset_index().sort_values(key, ascending=False).head(10)
@@ -330,17 +341,14 @@ with tab2:
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
                     st.plotly_chart(fig, use_container_width=True)
 
+        # Ranking Top 10 por persona en Tiendas si existe columna de nombre en el raw
         st.markdown('<div class="section-title">Ranking Top 10 por persona (kg) — Tiendas (si aplica)</div>', unsafe_allow_html=True)
-        # Si en el raw hay columna de nombre, intentar usarla
         name_col_candidates = [c for c in df_tiendas_raw.columns if "nombre" in normalize_col(c)]
         if name_col_candidates:
-            # reconstruir df_tiendas con nombre si existe
             name_col = name_col_candidates[0]
-            # extraer pesos de raw and name
             df_names = df_tiendas_raw[[name_col]].copy()
             df_names.columns = ["nombre_raw"]
             df_names["nombre"] = df_names["nombre_raw"].astype(str).fillna("Sin nombre")
-            # intentar alinear por índice
             df_names = df_names.reset_index(drop=True)
             dft_idx = dft.reset_index(drop=True)
             if len(df_names) == len(dft_idx):
