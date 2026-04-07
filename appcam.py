@@ -151,7 +151,7 @@ if load_errors:
     for source, msg in load_errors:
         st.sidebar.error(f"{source}: {msg}")
 
-# ─── Preparar y limpiar cada dataset (con columna fecha preservada) ───────
+# ─── Preparar y limpiar cada dataset (preservando índice y fecha) ────────
 def detect_date_column(cols):
     for c in cols:
         cn = normalize_col(c)
@@ -162,53 +162,39 @@ def detect_date_column(cols):
 def prepare_planta(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-    cols = df.columns.tolist()
-    date_col = detect_date_column(cols)
-    # parse date if exists
-    fecha_series = None
-    if date_col and date_col in df.columns:
-        fecha_series = pd.to_datetime(df[date_col], dayfirst=True, errors="coerce")
-    # remove marca temporal column from later heuristics but keep parsed fecha
-    df_work = df.copy()
-    if date_col:
-        # keep original for debugging but drop from columns used to detect name/area
-        df_work = df_work.drop(columns=[date_col])
-    # Detect name and area
+    date_col = detect_date_column(df.columns.tolist())
+    # create processed df preserving original index
+    df_proc = pd.DataFrame(index=df.index)
+    # detect name and area using original columns (do not drop date)
     name_col = None
     area_col = None
-    for c in df_work.columns:
+    for c in df.columns:
         cn = normalize_col(c)
         if "nombre" in cn and name_col is None:
             name_col = c
         if ("área" in cn or "area" in cn or "pertenece" in cn) and area_col is None:
             area_col = c
-    remaining = [c for c in df_work.columns if c not in ([name_col] if name_col else []) + ([area_col] if area_col else [])]
+    remaining = [c for c in df.columns if c not in ([name_col] if name_col else []) + ([area_col] if area_col else [])]
     if name_col is None and len(remaining) >= 1:
         name_col = remaining[0]
     if area_col is None and len(remaining) >= 2:
         area_col = remaining[1]
-    if area_col is None and len(df_work.columns) > 1:
-        area_col = df_work.columns[1]
-    camp_map = find_campaign_cols(df.columns)  # use original df columns to find campaign cols
-    df_proc = pd.DataFrame()
+    if area_col is None and len(df.columns) > 1:
+        area_col = df.columns[1]
+    # assign name and area
     df_proc["nombre"] = df[name_col].astype(str).fillna("Sin nombre") if name_col in df.columns else "Sin nombre"
     df_proc["area"] = df[area_col].astype(str).fillna("Sin área") if area_col in df.columns else "Sin área"
+    # campaigns
+    camp_map = find_campaign_cols(df.columns)
     for key, col in camp_map.items():
         if col is not None and col in df.columns:
             df_proc[key] = df[col].apply(extract_numeric_weight)
         else:
             df_proc[key] = 0.0
     df_proc["total_kg"] = df_proc[["botellas", "tapas", "aceite"]].sum(axis=1)
-    # attach fecha if parsed
-    if fecha_series is not None:
-        # align by index
-        fecha_series = fecha_series.reset_index(drop=True)
-        df_proc = df_proc.reset_index(drop=True)
-        if len(fecha_series) == len(df_proc):
-            df_proc["fecha"] = fecha_series
-        else:
-            # if lengths differ, still try to add NaT column
-            df_proc["fecha"] = pd.NaT
+    # parse and attach fecha aligned to original index
+    if date_col and date_col in df.columns:
+        df_proc["fecha"] = pd.to_datetime(df[date_col], dayfirst=True, errors="coerce")
     else:
         df_proc["fecha"] = pd.NaT
     return df_proc
@@ -216,37 +202,25 @@ def prepare_planta(df: pd.DataFrame) -> pd.DataFrame:
 def prepare_tiendas(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-    cols = df.columns.tolist()
-    date_col = detect_date_column(cols)
-    fecha_series = None
-    if date_col and date_col in df.columns:
-        fecha_series = pd.to_datetime(df[date_col], dayfirst=True, errors="coerce")
-    df_work = df.copy()
-    if date_col:
-        df_work = df_work.drop(columns=[date_col])
+    date_col = detect_date_column(df.columns.tolist())
+    df_proc = pd.DataFrame(index=df.index)
     tienda_col = None
-    for c in df_work.columns:
+    for c in df.columns:
         if "tienda" in normalize_col(c):
             tienda_col = c
             break
     if tienda_col is None:
-        tienda_col = df_work.columns[0]
-    camp_map = find_campaign_cols(df.columns)
-    df_proc = pd.DataFrame()
+        tienda_col = df.columns[0]
     df_proc["tienda"] = df[tienda_col].astype(str).fillna("Sin tienda")
+    camp_map = find_campaign_cols(df.columns)
     for key, col in camp_map.items():
         if col is not None and col in df.columns:
             df_proc[key] = df[col].apply(extract_numeric_weight)
         else:
             df_proc[key] = 0.0
     df_proc["total_kg"] = df_proc[["botellas", "tapas", "aceite"]].sum(axis=1)
-    if fecha_series is not None:
-        fecha_series = fecha_series.reset_index(drop=True)
-        df_proc = df_proc.reset_index(drop=True)
-        if len(fecha_series) == len(df_proc):
-            df_proc["fecha"] = fecha_series
-        else:
-            df_proc["fecha"] = pd.NaT
+    if date_col and date_col in df.columns:
+        df_proc["fecha"] = pd.to_datetime(df[date_col], dayfirst=True, errors="coerce")
     else:
         df_proc["fecha"] = pd.NaT
     return df_proc
@@ -269,9 +243,11 @@ with tab1:
         if "fecha" in df_planta.columns and df_planta["fecha"].notna().any():
             min_f = df_planta["fecha"].min().date()
             max_f = df_planta["fecha"].max().date()
-            rango = st.date_input("Rango de fechas (Planta)", value=(min_f, max_f), min_value=min_f, max_value=max_f)
+            rango = st.date_input("Rango de fechas (Planta)", value=(min_f, max_f), min_value=min_f, max_value=max_f, key="rango_planta")
             if isinstance(rango, (list, tuple)) and len(rango) == 2:
-                df_filtered = df_planta[(df_planta["fecha"].dt.date >= rango[0]) & (df_planta["fecha"].dt.date <= rango[1])].copy()
+                start_date, end_date = rango[0], rango[1]
+                # filter inclusive between start_date and end_date
+                df_filtered = df_planta[(df_planta["fecha"].dt.date >= start_date) & (df_planta["fecha"].dt.date <= end_date)].copy()
             else:
                 df_filtered = df_planta.copy()
         else:
@@ -322,9 +298,9 @@ with tab1:
                 if grp.empty:
                     st.info(f"No hay datos para {label}")
                 else:
-                    # ensure descending order with highest at top
-                    grp = grp.sort_values(key, ascending=True)  # for horizontal bar, reverse axis
-                    fig = px.bar(grp, x=key, y="nombre", orientation="h", text=key,
+                    # For horizontal bar with highest on top, sort ascending and reverse y-axis
+                    grp_plot = grp.sort_values(key, ascending=True)
+                    fig = px.bar(grp_plot, x=key, y="nombre", orientation="h", text=key,
                                  labels={key: "Kg", "nombre": "Persona"}, title=f"Top 10 personas — {label}")
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
                     fig.update_layout(height=380, margin=dict(l=80, r=20, t=40, b=20))
@@ -340,8 +316,8 @@ with tab1:
                 if grp.empty:
                     st.info(f"No hay datos para {label}")
                 else:
-                    grp = grp.sort_values(key, ascending=True)
-                    fig = px.bar(grp, x=key, y="area", orientation="h", text=key,
+                    grp_plot = grp.sort_values(key, ascending=True)
+                    fig = px.bar(grp_plot, x=key, y="area", orientation="h", text=key,
                                  labels={key: "Kg", "area": "Área"}, title=f"Top 10 áreas — {label}")
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
                     fig.update_layout(height=380, margin=dict(l=80, r=20, t=40, b=20))
@@ -397,7 +373,8 @@ with tab2:
             max_f = df_tiendas["fecha"].max().date()
             rango_t = st.date_input("Rango de fechas (Tiendas)", value=(min_f, max_f), min_value=min_f, max_value=max_f, key="rango_tiendas")
             if isinstance(rango_t, (list, tuple)) and len(rango_t) == 2:
-                df_t_filtered = df_tiendas[(df_tiendas["fecha"].dt.date >= rango_t[0]) & (df_tiendas["fecha"].dt.date <= rango_t[1])].copy()
+                start_date_t, end_date_t = rango_t[0], rango_t[1]
+                df_t_filtered = df_tiendas[(df_tiendas["fecha"].dt.date >= start_date_t) & (df_tiendas["fecha"].dt.date <= end_date_t)].copy()
             else:
                 df_t_filtered = df_tiendas.copy()
         else:
@@ -432,8 +409,8 @@ with tab2:
                 if grp.empty:
                     st.info(f"No hay datos para {label}")
                 else:
-                    grp = grp.sort_values(key, ascending=True)
-                    fig = px.bar(grp, x=key, y="tienda", orientation="h", text=key,
+                    grp_plot = grp.sort_values(key, ascending=True)
+                    fig = px.bar(grp_plot, x=key, y="tienda", orientation="h", text=key,
                                  labels={key: "Kg", "tienda": "Tienda"}, title=f"Top 10 tiendas — {label}")
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
                     fig.update_layout(height=380, margin=dict(l=80, r=20, t=40, b=20))
