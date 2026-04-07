@@ -280,6 +280,25 @@ with tab1:
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
                     st.plotly_chart(fig, use_container_width=True)
 
+        # Heatmap: área vs campañas (suma de kg)
+        st.markdown('<div class="section-title">Mapa de calor: cumplimiento por Área y Campaña — Planta</div>', unsafe_allow_html=True)
+        heat_df = dfp.groupby("area")[["botellas", "tapas", "aceite"]].sum().reset_index()
+        if heat_df.empty:
+            st.info("No hay datos suficientes para el mapa de calor de Planta.")
+        else:
+            heat_mat = heat_df.set_index("area")[["botellas", "tapas", "aceite"]]
+            # Normalizar o usar valores absolutos; aquí mostramos kg absolutos
+            fig_heat = px.imshow(heat_mat,
+                                 labels=dict(x="Campaña", y="Área", color="Kg recolectados"),
+                                 x=heat_mat.columns.tolist(),
+                                 y=heat_mat.index.tolist(),
+                                 color_continuous_scale=["#ef4444", "#f59e0b", "#2e9e5b"],
+                                 text_auto=".1f",
+                                 aspect="auto",
+                                 title="Kg recolectados por Área y Campaña (Planta)")
+            fig_heat.update_layout(height=420, margin=dict(l=120, r=20, t=60, b=20))
+            st.plotly_chart(fig_heat, use_container_width=True)
+
         # Pie chart total por campaña
         st.markdown('<div class="section-title">Distribución total (kg) por campaña — Planta</div>', unsafe_allow_html=True)
         totals = {"Botellas": dfp["botellas"].sum(), "Tapas": dfp["tapas"].sum(), "Aceite": dfp["aceite"].sum()}
@@ -288,33 +307,6 @@ with tab1:
                          color="campaña", color_discrete_map={"Botellas":"#2e9e5b","Tapas":"#f59e0b","Aceite":"#ef4444"})
         fig_pie.update_traces(textinfo="percent+label")
         st.plotly_chart(fig_pie, use_container_width=True)
-
-        # Evolución temporal (si hay columna de fecha en el raw original)
-        st.markdown('<div class="section-title">Evolución y distribución de registros — Planta</div>', unsafe_allow_html=True)
-        date_col = None
-        for c in df_planta_raw.columns:
-            if "fecha" in normalize_col(c) or "date" in normalize_col(c) or "marca temporal" in normalize_col(c) or "timestamp" in normalize_col(c):
-                date_col = c
-                break
-        if date_col and date_col in df_planta_raw.columns:
-            df_dates = df_planta_raw[[date_col]].copy()
-            df_dates.columns = ["fecha_raw"]
-            df_dates["fecha"] = pd.to_datetime(df_dates["fecha_raw"], errors="coerce", dayfirst=True)
-            df_dates = df_dates.reset_index(drop=True)
-            dfp_idx = dfp.reset_index(drop=True)
-            if len(df_dates) == len(dfp_idx):
-                dfp_idx["fecha"] = df_dates["fecha"]
-            else:
-                dfp_idx["fecha"] = pd.NaT
-            evo = dfp_idx.groupby("fecha")["total_kg"].sum().reset_index()
-            if evo["fecha"].notna().any():
-                fig_evo = px.line(evo, x="fecha", y="total_kg", markers=True, title="Evolución kg recolectados (por fecha)")
-                fig_evo.update_layout(height=420)
-                st.plotly_chart(fig_evo, use_container_width=True)
-            else:
-                st.info("No hay fechas válidas para mostrar evolución temporal en Planta.")
-        else:
-            st.info("No se detectó columna de fecha en la fuente Planta para evolución temporal.")
 
         # Tabla detallada
         st.markdown('<div class="section-title">Registros detallados — Planta</div>', unsafe_allow_html=True)
@@ -365,11 +357,29 @@ with tab2:
                     fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
                     st.plotly_chart(fig, use_container_width=True)
 
+        # Heatmap: tienda vs campañas (suma de kg)
+        st.markdown('<div class="section-title">Mapa de calor: Kg recolectados por Tienda y Campaña — Tiendas</div>', unsafe_allow_html=True)
+        heat_df_t = dft.groupby("tienda")[["botellas", "tapas", "aceite"]].sum().reset_index()
+        if heat_df_t.empty:
+            st.info("No hay datos suficientes para el mapa de calor de Tiendas.")
+        else:
+            heat_mat_t = heat_df_t.set_index("tienda")[["botellas", "tapas", "aceite"]]
+            fig_heat_t = px.imshow(heat_mat_t,
+                                   labels=dict(x="Campaña", y="Tienda", color="Kg recolectados"),
+                                   x=heat_mat_t.columns.tolist(),
+                                   y=heat_mat_t.index.tolist(),
+                                   color_continuous_scale=["#ef4444", "#f59e0b", "#2e9e5b"],
+                                   text_auto=".1f",
+                                   aspect="auto",
+                                   title="Kg recolectados por Tienda y Campaña (Tiendas)")
+            fig_heat_t.update_layout(height=420, margin=dict(l=140, r=20, t=60, b=20))
+            st.plotly_chart(fig_heat_t, use_container_width=True)
+
         # Pie chart total por campaña en Tiendas
-        st.markdown('<div class="section-title">Distribución total (kg) por campaña</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Distribución total (kg) por campaña — Tiendas</div>', unsafe_allow_html=True)
         totals_t = {"Botellas": dft["botellas"].sum(), "Tapas": dft["tapas"].sum(), "Aceite": dft["aceite"].sum()}
         pie_df_t = pd.DataFrame({"campaña": list(totals_t.keys()), "kg": list(totals_t.values())})
-        fig_pie_t = px.pie(pie_df_t, names="campaña", values="kg", title="Kg recolectados por campaña", hole=0.4,
+        fig_pie_t = px.pie(pie_df_t, names="campaña", values="kg", title="Kg recolectados por campaña (Tiendas)", hole=0.4,
                            color="campaña", color_discrete_map={"Botellas":"#2e9e5b","Tapas":"#f59e0b","Aceite":"#ef4444"})
         fig_pie_t.update_traces(textinfo="percent+label")
         st.plotly_chart(fig_pie_t, use_container_width=True)
