@@ -1,3 +1,10 @@
+"""
+Dashboard - Campañas Ambientales
+Autor: Generado con Claude
+Descripción: Lee datos desde Google Sheets, limpia y visualiza
+             los resultados de las campañas ambientales.
+"""
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -107,13 +114,10 @@ camp_labels = {v: k for k, v in CAMPAIGNS.items()}
 @st.cache_data(ttl=0)   # ttl=0 → se respeta el botón de refresco manual
 def load_data(url: str) -> pd.DataFrame:
     """Descarga y limpia los datos del Google Sheet."""
-    # Intentar leer con pandas desde la URL CSV de Google Sheets
     df = pd.read_csv(url)
 
     # ── Renombrar columnas a nombres cortos ──────────────────────────────────
-    # Protegemos contra cambios en el número de columnas
     expected_cols = list(df.columns[:10])
-    col_map = {}
     if len(expected_cols) >= 10:
         col_map = {
             expected_cols[0]:  "marca_temporal",
@@ -129,7 +133,6 @@ def load_data(url: str) -> pd.DataFrame:
         }
         df = df.rename(columns=col_map)
     else:
-        # Si el sheet tiene menos columnas, renombramos las que existan
         mapping_names = [
             "marca_temporal","fecha","grupo","area_admin","nombre_operacion",
             "area_operacion","tienda","botellas_raw","tapas_raw","aceite_raw"
@@ -145,7 +148,6 @@ def load_data(url: str) -> pd.DataFrame:
 
     # ── Limpiar columnas de campaña ──────────────────────────────────────────
     def parse_campaign(series: pd.Series) -> pd.Series:
-        """Convierte 'No Participa' → NaN y el resto a float."""
         cleaned = series.astype(str).str.strip()
         cleaned = cleaned.replace({"No Participa": np.nan, "nan": np.nan, "": np.nan})
         return pd.to_numeric(cleaned, errors="coerce")
@@ -244,7 +246,6 @@ try:
     with st.spinner("Cargando datos desde Google Sheets…"):
         df = load_data(CSV_URL)
 except Exception as e:
-    # Mensaje más informativo para 404 y otros errores comunes
     err_msg = str(e)
     if "404" in err_msg or "Not Found" in err_msg:
         st.error(
@@ -499,6 +500,69 @@ with r3c2:
         st.info("No hay registros de Operación con los filtros actuales.")
 
 
+# ── NUEVA GRÁFICA: Ranking por Grupos Administrativos ────────────────────────
+st.markdown('<div class="section-title">🏷️ Ranking por Grupos Administrativos</div>', unsafe_allow_html=True)
+
+# Definición de mapeo de áreas a grupos (según tu especificación)
+# Grupo 1 (SGA, SST, Sistemas, Inventarios, comercial)
+# Grupo 2 (Finanzas)
+# Grupo 3 (RRHH)
+# Grupo 4 (Diseño)
+# Grupo 5 (Mercadeo)
+# Grupo 6 (Tintoreria)
+AREA_TO_GROUP_LOWER = {
+    "sga": "Grupo 1",
+    "sst": "Grupo 1",
+    "sistemas": "Grupo 1",
+    "inventarios": "Grupo 1",
+    "comercial": "Grupo 1",
+    "finanzas": "Grupo 2",
+    "fiananzas": "Grupo 2",  # por si hay typo
+    "rrhh": "Grupo 3",
+    "diseño": "Grupo 4",
+    "diseno": "Grupo 4",
+    "mercadeo": "Grupo 5",
+    "tintoreria": "Grupo 6",
+    "tintorería": "Grupo 6",
+}
+
+def map_area_to_group(area_value: str) -> str:
+    if pd.isna(area_value):
+        return "Otros"
+    key = str(area_value).strip().lower()
+    return AREA_TO_GROUP_LOWER.get(key, "Otros")
+
+if not df_admin.empty and camp_cols_sel:
+    df_admin_groups = df_admin.copy()
+    df_admin_groups["grupo_admin_custom"] = df_admin_groups["area_admin"].apply(map_area_to_group)
+
+    group_sum = (
+        df_admin_groups.groupby("grupo_admin_custom")[camp_cols_sel]
+        .sum()
+        .reset_index()
+    )
+    group_sum["total_kg"] = group_sum[camp_cols_sel].sum(axis=1)
+    group_sum = group_sum.sort_values("total_kg", ascending=False)
+
+    group_melt = group_sum.melt(id_vars=["grupo_admin_custom", "total_kg"], value_vars=camp_cols_sel,
+                                var_name="col", value_name="kg")
+    group_melt["Campaña"] = group_melt["col"].map(camp_labels)
+
+    fig_group_rank = px.bar(
+        group_melt, x="kg", y="grupo_admin_custom", color="Campaña",
+        orientation="h", barmode="stack",
+        category_orders={"grupo_admin_custom": group_sum["grupo_admin_custom"].tolist()},
+        color_discrete_sequence=CAMPAIGN_COLORS,
+        title="Ranking por Grupos Administrativos (kg totales por campaña)",
+        labels={"grupo_admin_custom": "Grupo Administrativo", "kg": "Kg"},
+    )
+    fig_group_rank.update_layout(yaxis=dict(title="Grupo Administrativo"))
+    fig_group_rank.update_traces(marker_line_width=0)
+    st.plotly_chart(styled_fig(fig_group_rank), use_container_width=True)
+else:
+    st.info("No hay datos administrativos o campañas seleccionadas para el ranking por grupos.")
+
+
 # ── FILA 4: Tiendas + Ranking individual ────────────────────────────────────
 st.markdown('<div class="section-title">🏪 Tiendas y Ranking Individual</div>', unsafe_allow_html=True)
 r4c1, r4c2 = st.columns([1, 1.4])
@@ -507,17 +571,15 @@ r4c1, r4c2 = st.columns([1, 1.4])
 with r4c1:
     df_tienda = df_f[df_f["grupo"] == "Tienda"].copy() if "grupo" in df_f.columns else pd.DataFrame()
     if not df_tienda.empty and camp_cols_sel:
-        # Sumar por tienda y obtener total para ordenar
         tienda_sum = (
             df_tienda.groupby("tienda")[camp_cols_sel]
             .sum()
             .reset_index()
         )
-        # Calcular total combinado por tienda y ordenar
         tienda_sum["total_kg"] = tienda_sum[camp_cols_sel].sum(axis=1)
         top_tiendas = (
             tienda_sum.sort_values("total_kg", ascending=False)
-            .head(10)  # mostrar solo las primeras 10 tiendas
+            .head(10)
             .drop(columns=["total_kg"])
         )
 
@@ -547,7 +609,7 @@ with r4c2:
             .sum()
             .reset_index()
             .sort_values("total_kg", ascending=False)
-            .head(10)  # mostrar solo las primeras 10 personas
+            .head(10)
         )
         ranking.columns = ["Persona", "Área", "Total kg"]
 
