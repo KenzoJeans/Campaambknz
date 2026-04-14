@@ -493,7 +493,7 @@ with r3c2:
         st.info("No hay registros de Operación con los filtros actuales.")
 
 
-# ── NUEVA GRÁFICA: Ranking por Grupos Administrativos ────────────────────────
+# ── GRÁFICA: Ranking por Grupos Administrativos ────────────────────────
 st.markdown('<div class="section-title">🏷️ Ranking por Grupos Administrativos</div>', unsafe_allow_html=True)
 
 # Definición de mapeo de áreas a grupos (según tu especificación)
@@ -522,9 +522,11 @@ st.markdown(
     """
     <div style="font-size:13px;color:#9aa3ad;margin-top:8px;">
       <strong>Áreas por grupo:</strong>
-      Grupo 1: SGA, SST, Sistemas, Inventarios, Comercial; 
-      Grupo 2: Finanzas; Grupo 3: RRHH; Grupo 4: Diseño; 
-      Grupo 5: Mercadeo; Grupo 6: Tintorería
+      Grupo 1: (SGA, SST, Sistemas, Inventarios, Comercial) 
+      Grupo 2: (Finanzas) Grupo 3: (RRHH)
+      Grupo 4: (Diseño) 
+      Grupo 5: (Mercadeo)
+      Grupo 6: (Tintorería).
     </div>
     """,
     unsafe_allow_html=True,
