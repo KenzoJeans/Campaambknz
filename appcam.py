@@ -525,6 +525,18 @@ AREA_TO_GROUP_LOWER = {
     "tintoreria": "Grupo 6",
     "tintorería": "Grupo 6",
 }
+st.markdown(
+    """
+    <div style="font-size:13px;color:#9aa3ad;margin-top:8px;">
+      <strong>Áreas por grupo:</strong>
+      Grupo 1: SGA, SST, Sistemas, Inventarios, Comercial; 
+      Grupo 2: Finanzas; Grupo 3: RRHH; Grupo 4: Diseño; 
+      Grupo 5: Mercadeo; Grupo 6: Tintorería
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def map_area_to_group(area_value: str) -> str:
     if pd.isna(area_value):
