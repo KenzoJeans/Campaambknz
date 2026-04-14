@@ -1,15 +1,6 @@
-"""
-Dashboard - Campañas Ambientales
-Autor: Generado con Claude
-Descripción: Lee datos desde Google Sheets, limpia y visualiza
-             los resultados de las campañas ambientales.
-"""
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import numpy as np
 from datetime import datetime
 
@@ -96,8 +87,11 @@ hr { border-color: #2a2d35; margin: 24px 0; }
 
 
 # ── Constantes ───────────────────────────────────────────────────────────────
-SHEET_ID  = "157VmpJo9qvuKDmx12yya2E1caGa28HB4Kxd3-EeY_G8/edit?usp=sharing"
-CSV_URL   = f"https://docs.google.com/spreadsheets/d/"
+# Solo el ID del sheet (sin /edit?usp=sharing)
+SHEET_ID = "157VmpJo9qvuKDmx12yya2E1caGa28HB4Kxd3-EeY_G8"
+
+# URL de exportación CSV pública de Google Sheets
+CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv"
 
 CAMPAIGNS = {
     "Botellas con amor": "botellas_kg",
@@ -110,26 +104,41 @@ CAMPAIGNS = {
 @st.cache_data(ttl=0)   # ttl=0 → se respeta el botón de refresco manual
 def load_data(url: str) -> pd.DataFrame:
     """Descarga y limpia los datos del Google Sheet."""
+    # Intentar leer con pandas desde la URL CSV de Google Sheets
     df = pd.read_csv(url)
 
     # ── Renombrar columnas a nombres cortos ──────────────────────────────────
-    col_map = {
-        df.columns[0]:  "marca_temporal",
-        df.columns[1]:  "fecha",
-        df.columns[2]:  "grupo",
-        df.columns[3]:  "area_admin",
-        df.columns[4]:  "nombre_operacion",
-        df.columns[5]:  "area_operacion",
-        df.columns[6]:  "tienda",
-        df.columns[7]:  "botellas_raw",
-        df.columns[8]:  "tapas_raw",
-        df.columns[9]:  "aceite_raw",
-    }
-    df = df.rename(columns=col_map)
+    # Protegemos contra cambios en el número de columnas
+    expected_cols = list(df.columns[:10])
+    col_map = {}
+    if len(expected_cols) >= 10:
+        col_map = {
+            expected_cols[0]:  "marca_temporal",
+            expected_cols[1]:  "fecha",
+            expected_cols[2]:  "grupo",
+            expected_cols[3]:  "area_admin",
+            expected_cols[4]:  "nombre_operacion",
+            expected_cols[5]:  "area_operacion",
+            expected_cols[6]:  "tienda",
+            expected_cols[7]:  "botellas_raw",
+            expected_cols[8]:  "tapas_raw",
+            expected_cols[9]:  "aceite_raw",
+        }
+        df = df.rename(columns=col_map)
+    else:
+        # Si el sheet tiene menos columnas, renombramos las que existan
+        mapping_names = [
+            "marca_temporal","fecha","grupo","area_admin","nombre_operacion",
+            "area_operacion","tienda","botellas_raw","tapas_raw","aceite_raw"
+        ]
+        for i, col in enumerate(df.columns):
+            df = df.rename(columns={col: mapping_names[i]})
 
     # ── Parsear fechas ───────────────────────────────────────────────────────
-    df["fecha"] = pd.to_datetime(df["fecha"], dayfirst=True, errors="coerce")
-    df["marca_temporal"] = pd.to_datetime(df["marca_temporal"], dayfirst=True, errors="coerce")
+    if "fecha" in df.columns:
+        df["fecha"] = pd.to_datetime(df["fecha"], dayfirst=True, errors="coerce")
+    if "marca_temporal" in df.columns:
+        df["marca_temporal"] = pd.to_datetime(df["marca_temporal"], dayfirst=True, errors="coerce")
 
     # ── Limpiar columnas de campaña ──────────────────────────────────────────
     def parse_campaign(series: pd.Series) -> pd.Series:
@@ -138,9 +147,11 @@ def load_data(url: str) -> pd.DataFrame:
         cleaned = cleaned.replace({"No Participa": np.nan, "nan": np.nan, "": np.nan})
         return pd.to_numeric(cleaned, errors="coerce")
 
-    df["botellas_kg"] = parse_campaign(df["botellas_raw"])
-    df["tapas_kg"]    = parse_campaign(df["tapas_raw"])
-    df["aceite_kg"]   = parse_campaign(df["aceite_raw"])
+    for raw_col, new_col in [("botellas_raw", "botellas_kg"), ("tapas_raw", "tapas_kg"), ("aceite_raw", "aceite_kg")]:
+        if raw_col in df.columns:
+            df[new_col] = parse_campaign(df[raw_col])
+        else:
+            df[new_col] = pd.Series([np.nan] * len(df))
 
     # ── Flags de participación ───────────────────────────────────────────────
     df["participa_botellas"] = df["botellas_kg"].notna()
@@ -152,25 +163,29 @@ def load_data(url: str) -> pd.DataFrame:
 
     # ── Normalizar texto ─────────────────────────────────────────────────────
     for col in ["grupo", "area_admin", "area_operacion", "tienda"]:
-        df[col] = df[col].astype(str).str.strip()
-        df[col] = df[col].replace({"N/A": np.nan, "nan": np.nan})
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+            df[col] = df[col].replace({"N/A": np.nan, "nan": np.nan})
 
     # ── Semana ───────────────────────────────────────────────────────────────
-    df["semana"] = df["fecha"].dt.isocalendar().week.astype("Int64")
+    if "fecha" in df.columns:
+        df["semana"] = df["fecha"].dt.isocalendar().week.astype("Int64")
+    else:
+        df["semana"] = pd.Series([pd.NA] * len(df), dtype="Int64")
 
     return df
 
 
 def get_entity_label(row: pd.Series) -> str:
     """Devuelve la etiqueta del participante según su grupo."""
-    if row["grupo"] == "Tienda":
-        return f"Tienda – {row['tienda']}" if pd.notna(row["tienda"]) else "Tienda"
-    elif row["grupo"] == "Operación":
-        nombre = row["nombre_operacion"] if pd.notna(row.get("nombre_operacion")) else "—"
-        area   = row["area_operacion"]   if pd.notna(row.get("area_operacion"))   else "—"
+    if row.get("grupo") == "Tienda":
+        return f"Tienda – {row.get('tienda')}" if pd.notna(row.get("tienda")) else "Tienda"
+    elif row.get("grupo") == "Operación":
+        nombre = row.get("nombre_operacion") if pd.notna(row.get("nombre_operacion")) else "—"
+        area   = row.get("area_operacion")   if pd.notna(row.get("area_operacion"))   else "—"
         return f"{nombre} ({area})"
-    elif row["grupo"] == "Administrativo":
-        return f"Admin – {row['area_admin']}" if pd.notna(row["area_admin"]) else "Administrativo"
+    elif row.get("grupo") == "Administrativo":
+        return f"Admin – {row.get('area_admin')}" if pd.notna(row.get("area_admin")) else "Administrativo"
     return "Otro"
 
 
@@ -226,7 +241,18 @@ try:
     with st.spinner("Cargando datos desde Google Sheets…"):
         df = load_data(CSV_URL)
 except Exception as e:
-    st.error(f"❌ No se pudo cargar el Sheet. Verifica que sea público.\n\n`{e}`")
+    # Mensaje más informativo para 404 y otros errores comunes
+    err_msg = str(e)
+    if "404" in err_msg or "Not Found" in err_msg:
+        st.error(
+            "❌ No se pudo cargar el Sheet (HTTP 404). Verifica que:\n"
+            "- El ID del Sheet sea correcto.\n"
+            "- El Sheet sea público o compartido con 'Cualquiera con el enlace'.\n"
+            "- No estés usando una URL con parámetros (/edit?usp=sharing) en lugar del ID.\n\n"
+            f"Error técnico: `{err_msg}`"
+        )
+    else:
+        st.error(f"❌ No se pudo cargar el Sheet. Verifica que sea público.\n\n`{err_msg}`")
     st.stop()
 
 if df.empty:
@@ -236,10 +262,10 @@ if df.empty:
 
 # ── FILTROS EN SIDEBAR ────────────────────────────────────────────────────────
 with st.sidebar:
-    grupos_disp = sorted(df["grupo"].dropna().unique().tolist())
+    grupos_disp = sorted(df["grupo"].dropna().unique().tolist()) if "grupo" in df.columns else []
     grupos_sel  = st.multiselect("Grupo de participación", grupos_disp, default=grupos_disp)
 
-    fechas_disp = df["fecha"].dropna()
+    fechas_disp = df["fecha"].dropna() if "fecha" in df.columns else pd.Series(dtype="datetime64[ns]")
     if not fechas_disp.empty:
         fecha_min = fechas_disp.min().date()
         fecha_max = fechas_disp.max().date()
@@ -265,8 +291,11 @@ with st.sidebar:
 
 
 # ── APLICAR FILTROS ───────────────────────────────────────────────────────────
-mask = df["grupo"].isin(grupos_sel) if grupos_sel else pd.Series([True] * len(df))
-if f_ini and f_fin:
+mask = pd.Series([True] * len(df))
+if grupos_sel:
+    if "grupo" in df.columns:
+        mask &= df["grupo"].isin(grupos_sel)
+if f_ini and f_fin and "fecha" in df.columns:
     mask &= df["fecha"].between(f_ini, f_fin)
 df_f = df[mask].copy()
 
@@ -279,10 +308,10 @@ if df_f.empty:
 st.markdown('<div class="section-title">📊 Métricas Generales</div>', unsafe_allow_html=True)
 
 total_reg        = len(df_f)
-total_part       = df_f["participa_alguna"].sum()
-kg_botellas      = df_f["botellas_kg"].sum()
-kg_tapas         = df_f["tapas_kg"].sum()
-kg_aceite        = df_f["aceite_kg"].sum()
+total_part       = df_f["participa_alguna"].sum() if "participa_alguna" in df_f.columns else 0
+kg_botellas      = df_f["botellas_kg"].sum() if "botellas_kg" in df_f.columns else 0.0
+kg_tapas         = df_f["tapas_kg"].sum() if "tapas_kg" in df_f.columns else 0.0
+kg_aceite        = df_f["aceite_kg"].sum() if "aceite_kg" in df_f.columns else 0.0
 total_kg         = kg_botellas + kg_tapas + kg_aceite
 pct_participacion = round(total_part / total_reg * 100, 1) if total_reg else 0
 
@@ -309,7 +338,7 @@ with col3:
     <div class="metric-card" style="border-color:#2ecc71">
       <h3>🍶 Botellas con Amor</h3>
       <h1 style="color:#2ecc71">{kg_botellas:.1f} kg</h1>
-      <p>{df_f['participa_botellas'].sum()} participantes</p>
+      <p>{df_f['participa_botellas'].sum() if 'participa_botellas' in df_f.columns else 0} participantes</p>
     </div>""", unsafe_allow_html=True)
 
 with col4:
@@ -317,7 +346,7 @@ with col4:
     <div class="metric-card" style="border-color:#3498db">
       <h3>🔵 Tapas para Sanar</h3>
       <h1 style="color:#3498db">{kg_tapas:.1f} kg</h1>
-      <p>{df_f['participa_tapas'].sum()} participantes</p>
+      <p>{df_f['participa_tapas'].sum() if 'participa_tapas' in df_f.columns else 0} participantes</p>
     </div>""", unsafe_allow_html=True)
 
 with col5:
@@ -325,7 +354,7 @@ with col5:
     <div class="metric-card" style="border-color:#f39c12">
       <h3>🛢️ Aceite Green Fuel</h3>
       <h1 style="color:#f39c12">{kg_aceite:.1f} kg</h1>
-      <p>{df_f['participa_aceite'].sum()} participantes</p>
+      <p>{df_f['participa_aceite'].sum() if 'participa_aceite' in df_f.columns else 0} participantes</p>
     </div>""", unsafe_allow_html=True)
 
 
@@ -335,21 +364,24 @@ r1c1, r1c2 = st.columns([1, 1])
 
 # Donut – participación por grupo
 with r1c1:
-    grupo_counts = df_f["grupo"].value_counts().reset_index()
-    grupo_counts.columns = ["Grupo", "Registros"]
-    fig_donut = px.pie(
-        grupo_counts, values="Registros", names="Grupo",
-        hole=0.55,
-        color="Grupo",
-        color_discrete_map={
-            "Tienda":        COLORS["tienda"],
-            "Operación":     COLORS["operacion"],
-            "Administrativo":COLORS["admin"],
-        },
-        title="Registros por grupo",
-    )
-    fig_donut.update_traces(textposition="outside", textinfo="percent+label")
-    st.plotly_chart(styled_fig(fig_donut), use_container_width=True)
+    if "grupo" in df_f.columns:
+        grupo_counts = df_f["grupo"].value_counts().reset_index()
+        grupo_counts.columns = ["Grupo", "Registros"]
+        fig_donut = px.pie(
+            grupo_counts, values="Registros", names="Grupo",
+            hole=0.55,
+            color="Grupo",
+            color_discrete_map={
+                "Tienda":        COLORS["tienda"],
+                "Operación":     COLORS["operacion"],
+                "Administrativo":COLORS["admin"],
+            },
+            title="Registros por grupo",
+        )
+        fig_donut.update_traces(textposition="outside", textinfo="percent+label")
+        st.plotly_chart(styled_fig(fig_donut), use_container_width=True)
+    else:
+        st.info("No hay columna 'grupo' en los datos.")
 
 # Barras agrupadas – participación por campaña y grupo
 with r1c2:
@@ -357,50 +389,57 @@ with r1c2:
     camp_labels = {v: k for k, v in CAMPAIGNS.items()}
 
     rows = []
-    for grupo in df_f["grupo"].dropna().unique():
+    for grupo in df_f["grupo"].dropna().unique() if "grupo" in df_f.columns else []:
         sub = df_f[df_f["grupo"] == grupo]
         for col in camp_cols:
             rows.append({
                 "Grupo":    grupo,
                 "Campaña":  camp_labels[col],
-                "kg":       sub[col].sum(),
-                "Personas": sub[col].notna().sum(),
+                "kg":       sub[col].sum() if col in sub.columns else 0,
+                "Personas": sub[col].notna().sum() if col in sub.columns else 0,
             })
     df_camp = pd.DataFrame(rows)
 
-    fig_bar = px.bar(
-        df_camp, x="Grupo", y="kg", color="Campaña", barmode="group",
-        color_discrete_sequence=CAMPAIGN_COLORS,
-        title="Kg recolectados por grupo y campaña",
-        labels={"kg": "Kg recolectados"},
-    )
-    fig_bar.update_traces(marker_line_width=0)
-    st.plotly_chart(styled_fig(fig_bar), use_container_width=True)
+    if not df_camp.empty:
+        fig_bar = px.bar(
+            df_camp, x="Grupo", y="kg", color="Campaña", barmode="group",
+            color_discrete_sequence=CAMPAIGN_COLORS,
+            title="Kg recolectados por grupo y campaña",
+            labels={"kg": "Kg recolectados"},
+        )
+        fig_bar.update_traces(marker_line_width=0)
+        st.plotly_chart(styled_fig(fig_bar), use_container_width=True)
+    else:
+        st.info("No hay datos para mostrar en 'Kg recolectados por grupo y campaña'.")
 
 
 # ── FILA 2: Tendencia temporal ───────────────────────────────────────────────
 st.markdown('<div class="section-title">📅 Evolución Temporal</div>', unsafe_allow_html=True)
 
 camp_cols_sel = [CAMPAIGNS[c] for c in campañas_sel if c in CAMPAIGNS]
-df_time = (
-    df_f.groupby("fecha")[camp_cols_sel]
-    .sum()
-    .reset_index()
-    .sort_values("fecha")
-)
-df_time_melt = df_time.melt(id_vars="fecha", value_vars=camp_cols_sel,
-                             var_name="campaña_col", value_name="kg")
-df_time_melt["Campaña"] = df_time_melt["campaña_col"].map(camp_labels)
+if camp_cols_sel and "fecha" in df_f.columns:
+    df_time = (
+        df_f.groupby("fecha")[camp_cols_sel]
+        .sum()
+        .reset_index()
+        .sort_values("fecha")
+    )
+    df_time_melt = df_time.melt(id_vars="fecha", value_vars=camp_cols_sel,
+                                 var_name="campaña_col", value_name="kg")
+    camp_labels = {v: k for k, v in CAMPAIGNS.items()}
+    df_time_melt["Campaña"] = df_time_melt["campaña_col"].map(camp_labels)
 
-fig_line = px.line(
-    df_time_melt, x="fecha", y="kg", color="Campaña",
-    markers=True,
-    color_discrete_sequence=CAMPAIGN_COLORS,
-    title="Kg recolectados por día",
-    labels={"fecha": "Fecha", "kg": "Kg"},
-)
-fig_line.update_traces(line_width=2.5, marker_size=7)
-st.plotly_chart(styled_fig(fig_line), use_container_width=True)
+    fig_line = px.line(
+        df_time_melt, x="fecha", y="kg", color="Campaña",
+        markers=True,
+        color_discrete_sequence=CAMPAIGN_COLORS,
+        title="Kg recolectados por día",
+        labels={"fecha": "Fecha", "kg": "Kg"},
+    )
+    fig_line.update_traces(line_width=2.5, marker_size=7)
+    st.plotly_chart(styled_fig(fig_line), use_container_width=True)
+else:
+    st.info("No hay datos de fecha o campañas seleccionadas para la evolución temporal.")
 
 
 # ── FILA 3: Desglose por área (Admin) y por área (Operación) ─────────────────
@@ -409,7 +448,7 @@ r3c1, r3c2 = st.columns(2)
 
 # Administrativo
 with r3c1:
-    df_admin = df_f[df_f["grupo"] == "Administrativo"].copy()
+    df_admin = df_f[df_f["grupo"] == "Administrativo"].copy() if "grupo" in df_f.columns else pd.DataFrame()
     if not df_admin.empty:
         admin_sum = (
             df_admin.groupby("area_admin")[camp_cols_sel]
@@ -435,7 +474,7 @@ with r3c1:
 
 # Operación
 with r3c2:
-    df_oper = df_f[df_f["grupo"] == "Operación"].copy()
+    df_oper = df_f[df_f["grupo"] == "Operación"].copy() if "grupo" in df_f.columns else pd.DataFrame()
     if not df_oper.empty:
         oper_sum = (
             df_oper.groupby("area_operacion")[camp_cols_sel]
@@ -466,7 +505,7 @@ r4c1, r4c2 = st.columns([1, 1.4])
 
 # Tiendas
 with r4c1:
-    df_tienda = df_f[df_f["grupo"] == "Tienda"].copy()
+    df_tienda = df_f[df_f["grupo"] == "Tienda"].copy() if "grupo" in df_f.columns else pd.DataFrame()
     if not df_tienda.empty:
         tienda_sum = (
             df_tienda.groupby("tienda")[camp_cols_sel]
@@ -489,7 +528,7 @@ with r4c1:
 
 # Ranking individual (personas de Operación)
 with r4c2:
-    df_oper2 = df_f[df_f["grupo"] == "Operación"].copy()
+    df_oper2 = df_f[df_f["grupo"] == "Operación"].copy() if "grupo" in df_f.columns else pd.DataFrame()
     if not df_oper2.empty and camp_cols_sel:
         df_oper2["total_kg"] = df_oper2[camp_cols_sel].sum(axis=1)
         ranking = (
@@ -541,8 +580,9 @@ with st.expander("Ver tabla completa de registros", expanded=False):
         "fecha", "grupo", "area_admin", "nombre_operacion",
         "area_operacion", "tienda", "botellas_kg", "tapas_kg", "aceite_kg",
     ]
+    available_display_cols = [c for c in display_cols if c in df_f.columns]
     st.dataframe(
-        df_f[display_cols].rename(columns={
+        df_f[available_display_cols].rename(columns={
             "fecha":            "Fecha",
             "grupo":            "Grupo",
             "area_admin":       "Área Admin",
@@ -557,7 +597,7 @@ with st.expander("Ver tabla completa de registros", expanded=False):
         height=340,
     )
 
-    csv_export = df_f[display_cols].to_csv(index=False).encode("utf-8")
+    csv_export = df_f[available_display_cols].to_csv(index=False).encode("utf-8")
     st.download_button(
         "⬇️  Descargar CSV filtrado",
         csv_export,
@@ -571,14 +611,17 @@ with st.expander("Ver tabla completa de registros", expanded=False):
 st.markdown('<div class="section-title">📐 Estadísticas Descriptivas</div>', unsafe_allow_html=True)
 
 with st.expander("Ver estadísticas por campaña"):
-    stats = df_f[camp_cols_sel].describe().T
-    stats.index = [camp_labels[c] for c in stats.index]
-    stats = stats.rename(columns={
-        "count": "N participantes", "mean": "Promedio (kg)",
-        "std":   "Desv. estándar",  "min":  "Mínimo",
-        "25%":   "Q1", "50%": "Mediana", "75%": "Q3", "max": "Máximo",
-    })
-    st.dataframe(stats.style.format("{:.2f}"), use_container_width=True)
+    if camp_cols_sel:
+        stats = df_f[camp_cols_sel].describe().T
+        stats.index = [camp_labels[c] for c in stats.index]
+        stats = stats.rename(columns={
+            "count": "N participantes", "mean": "Promedio (kg)",
+            "std":   "Desv. estándar",  "min":  "Mínimo",
+            "25%":   "Q1", "50%": "Mediana", "75%": "Q3", "max": "Máximo",
+        })
+        st.dataframe(stats.style.format("{:.2f}"), use_container_width=True)
+    else:
+        st.info("No hay campañas seleccionadas para mostrar estadísticas.")
 
 
 # ── FOOTER ────────────────────────────────────────────────────────────────────
