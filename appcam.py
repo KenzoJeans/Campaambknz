@@ -1,10 +1,3 @@
-"""
-Dashboard - Campañas Ambientales
-Autor: Generado con Claude
-Descripción: Lee datos desde Google Sheets, limpia y visualiza
-             los resultados de las campañas ambientales.
-"""
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
