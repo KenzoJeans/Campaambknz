@@ -96,8 +96,8 @@ hr { border-color: #2a2d35; margin: 24px 0; }
 
 
 # ── Constantes ───────────────────────────────────────────────────────────────
-SHEET_ID  = "157VmpJo9qvuKDmx12yya2E1caGa28HB4Kxd3-EeY_G8"
-CSV_URL   = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+SHEET_ID  = "157VmpJo9qvuKDmx12yya2E1caGa28HB4Kxd3-EeY_G8/edit?usp=sharing"
+CSV_URL   = f"https://docs.google.com/spreadsheets/d/"
 
 CAMPAIGNS = {
     "Botellas con amor": "botellas_kg",
