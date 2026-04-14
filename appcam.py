@@ -99,6 +99,9 @@ CAMPAIGNS = {
     "Aceite Green Fuel": "aceite_kg",
 }
 
+# Map de columna -> etiqueta legible
+camp_labels = {v: k for k, v in CAMPAIGNS.items()}
+
 
 # ── Funciones de carga y limpieza ────────────────────────────────────────────
 @st.cache_data(ttl=0)   # ttl=0 → se respeta el botón de refresco manual
@@ -236,7 +239,7 @@ with st.sidebar:
     st.markdown("### 🎛️ Filtros")
 
 
-# ── CARGA DE DATOS ────────────────────────────────────────────────────────────
+# ── CARGA DE DATOS ───────────────────────────────────────────────────────────
 try:
     with st.spinner("Cargando datos desde Google Sheets…"):
         df = load_data(CSV_URL)
@@ -386,8 +389,6 @@ with r1c1:
 # Barras agrupadas – participación por campaña y grupo
 with r1c2:
     camp_cols = [CAMPAIGNS[c] for c in campañas_sel if c in CAMPAIGNS]
-    camp_labels = {v: k for k, v in CAMPAIGNS.items()}
-
     rows = []
     for grupo in df_f["grupo"].dropna().unique() if "grupo" in df_f.columns else []:
         sub = df_f[df_f["grupo"] == grupo]
@@ -426,7 +427,6 @@ if camp_cols_sel and "fecha" in df_f.columns:
     )
     df_time_melt = df_time.melt(id_vars="fecha", value_vars=camp_cols_sel,
                                  var_name="campaña_col", value_name="kg")
-    camp_labels = {v: k for k, v in CAMPAIGNS.items()}
     df_time_melt["Campaña"] = df_time_melt["campaña_col"].map(camp_labels)
 
     fig_line = px.line(
@@ -503,30 +503,41 @@ with r3c2:
 st.markdown('<div class="section-title">🏪 Tiendas y Ranking Individual</div>', unsafe_allow_html=True)
 r4c1, r4c2 = st.columns([1, 1.4])
 
-# Tiendas
+# Tiendas — Top 10 tiendas por kg
 with r4c1:
     df_tienda = df_f[df_f["grupo"] == "Tienda"].copy() if "grupo" in df_f.columns else pd.DataFrame()
-    if not df_tienda.empty:
+    if not df_tienda.empty and camp_cols_sel:
+        # Sumar por tienda y obtener total para ordenar
         tienda_sum = (
             df_tienda.groupby("tienda")[camp_cols_sel]
             .sum()
             .reset_index()
         )
-        tienda_melt = tienda_sum.melt(id_vars="tienda", value_vars=camp_cols_sel,
+        # Calcular total combinado por tienda y ordenar
+        tienda_sum["total_kg"] = tienda_sum[camp_cols_sel].sum(axis=1)
+        top_tiendas = (
+            tienda_sum.sort_values("total_kg", ascending=False)
+            .head(10)  # mostrar solo las primeras 10 tiendas
+            .drop(columns=["total_kg"])
+        )
+
+        tienda_melt = top_tiendas.melt(id_vars="tienda", value_vars=camp_cols_sel,
                                        var_name="col", value_name="kg")
         tienda_melt["Campaña"] = tienda_melt["col"].map(camp_labels)
 
         fig_tienda = px.bar(
             tienda_melt, x="tienda", y="kg", color="Campaña", barmode="group",
             color_discrete_sequence=CAMPAIGN_COLORS,
-            title="Kg por Tienda",
+            title="Kg por Tienda (Top 10 tiendas)",
             labels={"tienda": "Tienda", "kg": "Kg"},
         )
+        fig_tienda.update_layout(xaxis={'categoryorder':'total descending'})
+        fig_tienda.update_traces(marker_line_width=0)
         st.plotly_chart(styled_fig(fig_tienda), use_container_width=True)
     else:
         st.info("No hay registros de Tienda con los filtros actuales.")
 
-# Ranking individual (personas de Operación)
+# Ranking individual (personas de Operación) — Top 10
 with r4c2:
     df_oper2 = df_f[df_f["grupo"] == "Operación"].copy() if "grupo" in df_f.columns else pd.DataFrame()
     if not df_oper2.empty and camp_cols_sel:
@@ -536,7 +547,7 @@ with r4c2:
             .sum()
             .reset_index()
             .sort_values("total_kg", ascending=False)
-            .head(15)
+            .head(10)  # mostrar solo las primeras 10 personas
         )
         ranking.columns = ["Persona", "Área", "Total kg"]
 
@@ -544,7 +555,7 @@ with r4c2:
             ranking, x="Total kg", y="Persona", orientation="h",
             color="Área",
             color_discrete_sequence=px.colors.qualitative.Set2,
-            title="Top personas de Operación (kg totales)",
+            title="Top 10 personas de Operación (kg totales)",
         )
         fig_rank.update_layout(yaxis=dict(categoryorder="total ascending"))
         fig_rank.update_traces(marker_line_width=0)
