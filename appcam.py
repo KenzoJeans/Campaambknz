@@ -9,7 +9,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 import io
-from datetime import datetime, date
 
 # ──────────────────────────────────────────────
 # CONFIGURACIÓN PÁGINA
@@ -20,22 +19,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-# ──────────────────────────────────────────────
-# CONSTANTES / URL POR DEFECTO
-# ──────────────────────────────────────────────
-DEFAULT_SHEET = "https://docs.google.com/spreadsheets/d/157VmpJo9qvuKDmx12yya2E1caGa28HB4Kxd3-EeY_G8"
-# Asegurar formato export CSV
-def ensure_csv_export(url: str) -> str:
-    if "export?format=csv" in url:
-        return url
-    if "/edit#gid=" in url:
-        return url.replace("/edit#gid=", "/export?format=csv&gid=")
-    if "/edit?usp=sharing" in url:
-        return url.replace("/edit?usp=sharing", "/export?format=csv")
-    return url.rstrip("/") + "/export?format=csv"
-
-DEFAULT_URL = ensure_csv_export(DEFAULT_SHEET)
 
 # ──────────────────────────────────────────────
 # ESTILOS CSS
@@ -136,6 +119,7 @@ GRUPO_NOMBRES = {
     "Grupo 6": "Grupo 6 (Tintorería)",
 }
 
+
 # ──────────────────────────────────────────────
 # FUNCIONES AUXILIARES
 # ──────────────────────────────────────────────
@@ -147,11 +131,14 @@ def clean_weight(series: pd.Series) -> pd.Series:
               .astype(float)
     )
 
+
 def load_data(source) -> pd.DataFrame:
     """Carga y normaliza el DataFrame desde varias fuentes."""
     if isinstance(source, str):           # URL de Google Sheets
-        url = source
-        url = ensure_csv_export(url)
+        url = source.replace("/edit#gid=", "/export?format=csv&gid=")
+        url = url.replace("/edit?usp=sharing", "/export?format=csv")
+        if "export?format=csv" not in url:
+            url = url.rstrip("/") + "/export?format=csv"
         df = pd.read_csv(url)
     else:                                  # Archivo subido
         name = source.name
@@ -200,19 +187,13 @@ def load_data(source) -> pd.DataFrame:
     df["aceite_kg"]   = clean_weight(df["aceite_kg"])
 
     # ── Normalizar grupo ──────────────────────────────────────────────
-    df["grupo"] = df["grupo"].astype(str).str.strip().str.title()
+    df["grupo"] = df["grupo"].str.strip().str.title()
 
     # ── Grupo administrativo mapeado ──────────────────────────────────
     df["grupo_admin"] = df["area_admin"].map(ADMIN_GRUPOS)
 
-    # ── Intentar parsear fecha si existe ──────────────────────────────
-    if "fecha" in df.columns:
-        try:
-            df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
-        except Exception:
-            df["fecha"] = pd.to_datetime(df["fecha"].astype(str), errors="coerce")
-
     return df
+
 
 def top10_bar(df_filtered: pd.DataFrame, col_label: str, col_value: str,
               title: str, color: str, top_n: int = 10) -> go.Figure:
@@ -256,19 +237,10 @@ def top10_bar(df_filtered: pd.DataFrame, col_label: str, col_value: str,
     )
     return fig
 
-# ──────────────────────────────────────────────
-# SESSION STATE: controlar carga y recarga
-# ──────────────────────────────────────────────
-if "data_source" not in st.session_state:
-    st.session_state["data_source"] = None
-if "df" not in st.session_state:
-    st.session_state["df"] = None
-if "last_loaded_source" not in st.session_state:
-    st.session_state["last_loaded_source"] = None
 
-# ──────────────────────────────────────────────
-# SIDEBAR: fuente, filtros y botón de refresco
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
+# SIDEBAR
+# ══════════════════════════════════════════════
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/leaf.png", width=70)
     st.markdown("## 🌿 Campañas Ambientales")
@@ -277,10 +249,9 @@ with st.sidebar:
 
     modo = st.radio("Selecciona el modo de carga:", ["📎 Subir archivo", "🔗 URL Google Sheets"])
 
-    uploaded = None
-    gs_url = ""
+    data_source = None
     if modo == "📎 Subir archivo":
-        uploaded = st.file_uploader(
+        data_source = st.file_uploader(
             "Sube el archivo CSV o Excel:",
             type=["csv", "xlsx", "xls"],
             help="Exporta la hoja de cálculo en formato CSV o Excel.",
@@ -291,150 +262,53 @@ with st.sidebar:
             placeholder="https://docs.google.com/spreadsheets/d/...",
             help="La hoja debe estar publicada (Archivo → Publicar en la web → CSV).",
         )
+        if gs_url.strip():
+            data_source = gs_url.strip()
 
     st.markdown("---")
     st.markdown("### 🎛️ Filtros")
     top_n = st.slider("Número de posiciones en Rankings:", 5, 20, 10)
 
     st.markdown("---")
-    # Botón de refresco / carga por defecto
-    col_a, col_b = st.columns([2, 1])
-    with col_a:
-        if st.button("🔄 Refrescar datos"):
-            # Si hay archivo subido o URL en el input, priorizarlo; si no, usar DEFAULT_URL
-            if uploaded is not None:
-                st.session_state["data_source"] = uploaded
-            elif gs_url and gs_url.strip():
-                st.session_state["data_source"] = gs_url.strip()
-            else:
-                st.session_state["data_source"] = DEFAULT_URL
-            # Forzar recarga
-            st.session_state["last_loaded_source"] = None
-            st.experimental_rerun()
-    with col_b:
-        if st.button("📥 Cargar por defecto"):
-            st.session_state["data_source"] = DEFAULT_URL
-            st.session_state["last_loaded_source"] = None
-            st.experimental_rerun()
-
-    st.markdown("---")
     st.caption("Dashboard creado con Streamlit + Plotly")
 
-# ──────────────────────────────────────────────
+
+# ══════════════════════════════════════════════
 # CABECERA
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 st.markdown('<div class="main-title">🌿 Dashboard Campañas Ambientales</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">Botellas con Amor &nbsp;|&nbsp; Tapas para Sanar &nbsp;|&nbsp; Aceite Green Fuel</div>', unsafe_allow_html=True)
 
-# ──────────────────────────────────────────────
-# DETERMINAR DATA_SOURCE A USAR (prioridad: session_state > inputs)
-# ──────────────────────────────────────────────
-# Preferir lo que ya está en session_state (por botón), si no, tomar lo del sidebar actual
-if st.session_state.get("data_source") is None:
-    # intentar tomar lo que el usuario dejó en el sidebar (uploaded o gs_url)
-    try:
-        # 'uploaded' y 'gs_url' vienen del contexto del sidebar
-        if 'uploaded' in locals() and uploaded is not None:
-            st.session_state["data_source"] = uploaded
-        elif 'gs_url' in locals() and gs_url and gs_url.strip():
-            st.session_state["data_source"] = gs_url.strip()
-        else:
-            # No hay nada: no cargar automáticamente, mostrar opción para cargar por defecto
-            st.session_state["data_source"] = None
-    except Exception:
-        st.session_state["data_source"] = None
+# ══════════════════════════════════════════════
+# CARGA DE DATOS
+# ══════════════════════════════════════════════
+if data_source is None:
+    st.info("👈 Carga un archivo o ingresa la URL de tu Google Sheet en el panel lateral para comenzar.")
+    st.stop()
 
-# Si aún no hay fuente, mostrar mensaje y ofrecer cargar por defecto
-if st.session_state["data_source"] is None:
-    st.info("👈 Carga un archivo o ingresa la URL de tu Google Sheet en el panel lateral para comenzar. Usa 'Cargar por defecto' para usar la hoja pública.")
+try:
+    with st.spinner("Cargando y procesando datos..."):
+        df = load_data(data_source)
+except Exception as e:
+    st.error(f"❌ Error al cargar los datos: {e}")
     st.stop()
 
 # ──────────────────────────────────────────────
-# CARGA DE DATOS (solo si la fuente cambió o no hay df en session_state)
+# SUBCONJUNTOS
 # ──────────────────────────────────────────────
-source_to_load = st.session_state["data_source"]
-if st.session_state.get("last_loaded_source") != str(source_to_load) or st.session_state["df"] is None:
-    try:
-        with st.spinner("Cargando y procesando datos..."):
-            df = load_data(source_to_load)
-            st.session_state["df"] = df
-            st.session_state["last_loaded_source"] = str(source_to_load)
-    except Exception as e:
-        st.error(f"❌ Error al cargar los datos: {e}")
-        st.stop()
-else:
-    df = st.session_state["df"]
+df_op    = df[df["grupo"].str.lower() == "operación"].copy()
+df_admin = df[df["grupo"].str.lower() == "administrativo"].copy()
+df_tienda= df[df["grupo"].str.lower() == "tienda"].copy()
 
-# ──────────────────────────────────────────────
-# FILTROS ADICIONALES: FECHA y ÁREA ADMINISTRATIVA
-# ──────────────────────────────────────────────
-df_filtered = df.copy()
-
-# Fecha: si existe columna 'fecha' con valores válidos
-if "fecha" in df_filtered.columns and pd.api.types.is_datetime64_any_dtype(df_filtered["fecha"]):
-    min_date = df_filtered["fecha"].min().date()
-    max_date = df_filtered["fecha"].max().date()
-    if pd.isna(min_date) or pd.isna(max_date):
-        # si hay NaT, intentar inferir desde strings convertidos
-        valid_dates = df_filtered["fecha"].dropna()
-        if not valid_dates.empty:
-            min_date = valid_dates.min().date()
-            max_date = valid_dates.max().date()
-        else:
-            min_date = date.today()
-            max_date = date.today()
-
-    st.sidebar.markdown("### 📅 Filtrar por fecha")
-    date_range = st.sidebar.date_input(
-        "Rango de fechas",
-        value=(min_date, max_date),
-        min_value=min_date,
-        max_value=max_date,
-    )
-    # Asegurar tupla (start, end)
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        start_date, end_date = date_range
-        # convertir a datetime para comparar
-        start_dt = pd.to_datetime(start_date)
-        end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-        df_filtered = df_filtered[(df_filtered["fecha"] >= start_dt) & (df_filtered["fecha"] <= end_dt)]
-    else:
-        # si el usuario selecciona un solo día, tratarlo como rango de un día
-        single = pd.to_datetime(date_range)
-        df_filtered = df_filtered[df_filtered["fecha"].dt.date == single.date()]
-
-else:
-    st.sidebar.markdown("### 📅 Filtrar por fecha")
-    st.sidebar.info("No se detectó una columna 'fecha' con valores válidos en los datos. El filtro por fecha no está disponible.")
-
-# Área administrativa: multiselect
-st.sidebar.markdown("### 🏷️ Filtrar por Área administrativa")
-areas = df_filtered["area_admin"].dropna().unique().tolist()
-# Normalizar y ordenar
-areas = sorted([a for a in areas if a not in [None, "N/A", ""]])
-if areas:
-    selected_areas = st.sidebar.multiselect("Selecciona áreas (dejar vacío = todas):", options=areas, default=areas)
-    if selected_areas:
-        df_filtered = df_filtered[df_filtered["area_admin"].isin(selected_areas)]
-else:
-    st.sidebar.info("No hay valores de 'area_admin' disponibles para filtrar.")
-
-# ──────────────────────────────────────────────
-# SUBCONJUNTOS (usar df_filtered)
-# ──────────────────────────────────────────────
-df_op    = df_filtered[df_filtered["grupo"].str.lower() == "operación"].copy()
-df_admin = df_filtered[df_filtered["grupo"].str.lower() == "administrativo"].copy()
-df_tienda= df_filtered[df_filtered["grupo"].str.lower() == "tienda"].copy()
-
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 # 0. KPIs GENERALES
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 st.markdown('<div class="section-header">📊 Resumen General</div>', unsafe_allow_html=True)
 
-total_participantes = len(df_filtered)
-total_botellas      = df_filtered["botellas_kg"].sum()
-total_tapas         = df_filtered["tapas_kg"].sum()
-total_aceite        = df_filtered["aceite_kg"].sum()
+total_participantes = len(df)
+total_botellas      = df["botellas_kg"].sum()
+total_tapas         = df["tapas_kg"].sum()
+total_aceite        = df["aceite_kg"].sum()
 total_kg            = total_botellas + total_tapas + total_aceite
 
 cols_kpi = st.columns(5)
@@ -454,15 +328,16 @@ for col, (icon, val, label) in zip(cols_kpi, kpis):
             <div class="metric-label">{label}</div>
         </div>""", unsafe_allow_html=True)
 
-# ──────────────────────────────────────────────
+
+# ══════════════════════════════════════════════
 # 1. TORTA — % Participación por Grupos
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🥧 Participación por Grupos</div>', unsafe_allow_html=True)
 
 c1, c2 = st.columns([1, 1])
 
 with c1:
-    part_grupo = df_filtered["grupo"].value_counts().reset_index()
+    part_grupo = df["grupo"].value_counts().reset_index()
     part_grupo.columns = ["Grupo", "Participantes"]
     fig_pie = px.pie(
         part_grupo,
@@ -488,7 +363,7 @@ with c1:
 
 with c2:
     # Kg recolectados por grupo
-    df_grupo_kg = df_filtered.groupby("grupo")[["botellas_kg","tapas_kg","aceite_kg"]].sum().reset_index()
+    df_grupo_kg = df.groupby("grupo")[["botellas_kg","tapas_kg","aceite_kg"]].sum().reset_index()
     df_grupo_kg_melt = df_grupo_kg.melt(id_vars="grupo", var_name="Campaña", value_name="kg")
     df_grupo_kg_melt["Campaña"] = df_grupo_kg_melt["Campaña"].map({
         "botellas_kg": "Botellas con Amor",
@@ -516,9 +391,10 @@ with c2:
     )
     st.plotly_chart(fig_bar_grupo, use_container_width=True)
 
-# ──────────────────────────────────────────────
-# 2. DISTRIBUCIÓN POR CAMPAÑA
-# ──────────────────────────────────────────────
+
+# ══════════════════════════════════════════════
+# 2. TORTA — % Contribución por Campaña
+# ══════════════════════════════════════════════
 st.markdown('<div class="section-header">📈 Distribución por Campaña</div>', unsafe_allow_html=True)
 
 c1, c2 = st.columns(2)
@@ -552,9 +428,9 @@ with c1:
 
 with c2:
     # Participantes por campaña (quiénes SI participan)
-    part_b = (df_filtered["botellas_kg"] > 0).sum()
-    part_t = (df_filtered["tapas_kg"] > 0).sum()
-    part_a = (df_filtered["aceite_kg"] > 0).sum()
+    part_b = (df["botellas_kg"] > 0).sum()
+    part_t = (df["tapas_kg"] > 0).sum()
+    part_a = (df["aceite_kg"] > 0).sum()
     df_part_camp = pd.DataFrame({
         "Campaña": ["Botellas con Amor", "Tapas para Sanar", "Aceite Green Fuel"],
         "Participantes": [part_b, part_t, part_a],
@@ -581,9 +457,10 @@ with c2:
     )
     st.plotly_chart(fig_part_camp, use_container_width=True)
 
-# ──────────────────────────────────────────────
+
+# ══════════════════════════════════════════════
 # 3. RANKINGS — OPERADORES
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🏭 Rankings — Operadores</div>', unsafe_allow_html=True)
 
 c1, c2 = st.columns(2)
@@ -601,9 +478,10 @@ with c2:
     )
     st.plotly_chart(fig_op_tap, use_container_width=True)
 
-# ──────────────────────────────────────────────
+
+# ══════════════════════════════════════════════
 # 4. RANKINGS — TIENDAS
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🏪 Rankings — Tiendas</div>', unsafe_allow_html=True)
 
 c1, c2 = st.columns(2)
@@ -621,12 +499,14 @@ with c2:
     )
     st.plotly_chart(fig_t_tap, use_container_width=True)
 
-# ──────────────────────────────────────────────
+
+# ══════════════════════════════════════════════
 # 5. RANKING — ACEITE (TODOS LOS GRUPOS, POR PERSONA)
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🛢️ Ranking — Aceite Green Fuel (Todos los Grupos)</div>', unsafe_allow_html=True)
 
-df_aceite_all = df_filtered.copy()
+# Construir etiqueta: nombre_persona si existe, sino area_admin o tienda
+df_aceite_all = df.copy()
 df_aceite_all["etiqueta"] = df_aceite_all.apply(
     lambda r: r["nombre_persona"] if r["nombre_persona"] != "N/A"
     else (r["area_admin"] if r["area_admin"] != "N/A"
@@ -639,11 +519,13 @@ fig_aceite = top10_bar(
 )
 st.plotly_chart(fig_aceite, use_container_width=True)
 
-# ──────────────────────────────────────────────
+
+# ══════════════════════════════════════════════
 # 6. RANKINGS — ADMINISTRATIVOS
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🏢 Rankings — Administrativos</div>', unsafe_allow_html=True)
 
+# Etiqueta: si hay nombre_persona se usa, si no el area_admin
 df_admin["etiqueta"] = df_admin.apply(
     lambda r: r["nombre_persona"] if r["nombre_persona"] != "N/A"
     else r["area_admin"],
@@ -665,9 +547,10 @@ with c2:
     )
     st.plotly_chart(fig_adm_tap, use_container_width=True)
 
-# ──────────────────────────────────────────────
+
+# ══════════════════════════════════════════════
 # 7. RANKING — ADMINISTRATIVOS POR GRUPO INTERNO
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🏆 Competencia Interna — Grupos Administrativos</div>', unsafe_allow_html=True)
 
 df_admin_gpo = (
@@ -680,6 +563,7 @@ df_admin_gpo["total_kg"]      = df_admin_gpo[["botellas_kg","tapas_kg","aceite_k
 df_admin_gpo["nombre_grupo"]  = df_admin_gpo["grupo_admin"].map(GRUPO_NOMBRES)
 df_admin_gpo = df_admin_gpo.sort_values("total_kg", ascending=False)
 
+# Barras apiladas por grupo interno
 df_gpo_melt = df_admin_gpo.melt(
     id_vars=["nombre_grupo","total_kg"],
     value_vars=["botellas_kg","tapas_kg","aceite_kg"],
@@ -715,9 +599,10 @@ fig_gpo_stack.update_layout(
 )
 st.plotly_chart(fig_gpo_stack, use_container_width=True)
 
-# ──────────────────────────────────────────────
+
+# ══════════════════════════════════════════════
 # 8. MAPA DE CALOR — Participación por Área y Campaña
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🌡️ Mapa de Calor — Área Administrativa vs Campaña</div>', unsafe_allow_html=True)
 
 df_heat = (
@@ -745,9 +630,10 @@ if not df_heat.empty:
     )
     st.plotly_chart(fig_heat, use_container_width=True)
 
-# ──────────────────────────────────────────────
+
+# ══════════════════════════════════════════════
 # 9. RADAR — Grupos Administrativos
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 if len(df_admin_gpo) >= 3:
     st.markdown('<div class="section-header">🕸️ Radar — Grupos Administrativos</div>', unsafe_allow_html=True)
 
@@ -776,16 +662,17 @@ if len(df_admin_gpo) >= 3:
     )
     st.plotly_chart(fig_radar, use_container_width=True)
 
-# ──────────────────────────────────────────────
+
+# ══════════════════════════════════════════════
 # 10. TABLA RESUMEN DESCARGABLE
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 st.markdown('<div class="section-header">📋 Tabla de Datos</div>', unsafe_allow_html=True)
 
 with st.expander("Ver / Descargar tabla completa", expanded=False):
     col_show = [c for c in ["fecha","grupo","area_admin","nombre_persona","tienda",
-                             "botellas_kg","tapas_kg","aceite_kg"] if c in df_filtered.columns]
+                             "botellas_kg","tapas_kg","aceite_kg"] if c in df.columns]
     st.dataframe(
-        df_filtered[col_show].rename(columns={
+        df[col_show].rename(columns={
             "fecha": "Fecha", "grupo": "Grupo", "area_admin": "Área",
             "nombre_persona": "Persona", "tienda": "Tienda",
             "botellas_kg": "Botellas (kg)", "tapas_kg": "Tapas (kg)", "aceite_kg": "Aceite (kg)"
@@ -793,7 +680,7 @@ with st.expander("Ver / Descargar tabla completa", expanded=False):
         use_container_width=True,
         height=300,
     )
-    csv_bytes = df_filtered[col_show].to_csv(index=False).encode("utf-8-sig")
+    csv_bytes = df[col_show].to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         "⬇️ Descargar CSV",
         data=csv_bytes,
