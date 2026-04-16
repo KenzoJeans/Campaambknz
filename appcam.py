@@ -436,7 +436,7 @@ else:
     st.info("No hay datos de fecha o campañas seleccionadas para la evolución temporal.")
 
 
-# ── FILA 3: Desglose por área (Admin) y por área (Operación) ─────────────────
+# ── FILA 3: Desglose por área (solo Admin) ────────────────────────────────
 st.markdown('<div class="section-title">🏢 Desglose por Área</div>', unsafe_allow_html=True)
 r3c1, r3c2 = st.columns(2)
 
@@ -465,33 +465,6 @@ with r3c1:
         st.plotly_chart(styled_fig(fig_admin), use_container_width=True)
     else:
         st.info("No hay registros de Administrativo con los filtros actuales.")
-
-# Operación
-with r3c2:
-    df_oper = df_f[df_f["grupo"] == "Operación"].copy() if "grupo" in df_f.columns else pd.DataFrame()
-    if not df_oper.empty:
-        oper_sum = (
-            df_oper.groupby("area_operacion")[camp_cols_sel]
-            .sum()
-            .reset_index()
-        )
-        oper_melt = oper_sum.melt(id_vars="area_operacion", value_vars=camp_cols_sel,
-                                   var_name="col", value_name="kg")
-        oper_melt["Campaña"] = oper_melt["col"].map(camp_labels)
-        oper_melt = oper_melt[oper_melt["kg"] > 0]
-
-        fig_oper = px.bar(
-            oper_melt, x="kg", y="area_operacion", color="Campaña",
-            orientation="h", barmode="stack",
-            color_discrete_sequence=CAMPAIGN_COLORS,
-            title="Kg recolectados – Áreas de Operación",
-            labels={"area_operacion": "Área", "kg": "Kg"},
-        )
-        fig_oper.update_traces(marker_line_width=0)
-        st.plotly_chart(styled_fig(fig_oper), use_container_width=True)
-    else:
-        st.info("No hay registros de Operación con los filtros actuales.")
-
 
 # ── GRÁFICA: Ranking por Grupos Administrativos ────────────────────────
 st.markdown('<div class="section-title">🏷️ Ranking por Grupos Administrativos</div>', unsafe_allow_html=True)
@@ -584,11 +557,7 @@ with r4c1:
             .reset_index()
         )
         tienda_sum["total_kg"] = tienda_sum[camp_cols_sel].sum(axis=1)
-        top_tiendas = (
-            tienda_sum.sort_values("total_kg", ascending=False)
-            .head(10)
-            .drop(columns=["total_kg"])
-        )
+        top_tiendas = tienda_sum.sort_values("total_kg", ascending=False).head(10)
 
         tienda_melt = top_tiendas.melt(id_vars="tienda", value_vars=camp_cols_sel,
                                        var_name="col", value_name="kg")
@@ -612,26 +581,23 @@ with r4c2:
     if not df_oper2.empty and camp_cols_sel:
         df_oper2["total_kg"] = df_oper2[camp_cols_sel].sum(axis=1)
         ranking = (
-            df_oper2.groupby(["nombre_operacion", "area_operacion"])["total_kg"]
+            df_oper2.groupby("nombre_operacion")["total_kg"]
             .sum()
             .reset_index()
             .sort_values("total_kg", ascending=False)
             .head(10)
         )
-        ranking.columns = ["Persona", "Área", "Total kg"]
+        ranking.columns = ["Persona", "Total kg"]
 
         fig_rank = px.bar(
             ranking, x="Total kg", y="Persona", orientation="h",
-            color="Área",
-            color_discrete_sequence=px.colors.qualitative.Set2,
             title="Top 10 personas de Operación (kg totales)",
         )
         fig_rank.update_layout(yaxis=dict(categoryorder="total ascending"))
         fig_rank.update_traces(marker_line_width=0)
         st.plotly_chart(styled_fig(fig_rank), use_container_width=True)
     else:
-        st.info("No hay datos de Operación para el ranking.")
-
+        st.info("No hay datos de Operación para el ranking."
 
 # ── FILA 5: Heatmap de contribución ──────────────────────────────────────────
 if camp_cols_sel:
