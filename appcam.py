@@ -119,8 +119,8 @@ def load_data(url: str) -> pd.DataFrame:
             expected_cols[2]:  "grupo",
             expected_cols[3]:  "area_admin",
             expected_cols[4]:  "nombre_operacion",
-            # expected_cols[5] used to be area_operacion in older schema; skip mapping to it
-            expected_cols[5]:  "area_operacion",  # keep mapping if present but may be NaN in new data
+            # keep mapping for historical compatibility; may be NaN in new data
+            expected_cols[5]:  "area_operacion",
             expected_cols[6]:  "tienda",
             expected_cols[7]:  "botellas_raw",
             expected_cols[8]:  "tapas_raw",
@@ -162,7 +162,7 @@ def load_data(url: str) -> pd.DataFrame:
     )
 
     # ── Normalizar texto ─────────────────────────────────────────────────────
-    for col in ["grupo", "area_admin", "area_operacion", "tienda"]:
+    for col in ["grupo", "area_admin", "area_operacion", "tienda", "nombre_operacion"]:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
             df[col] = df[col].replace({"N/A": np.nan, "nan": np.nan})
@@ -182,7 +182,6 @@ def get_entity_label(row: pd.Series) -> str:
         return f"Tienda – {row.get('tienda')}" if pd.notna(row.get("tienda")) else "Tienda"
     elif row.get("grupo") == "Operación":
         nombre = row.get("nombre_operacion") if pd.notna(row.get("nombre_operacion")) else "—"
-        # area_operacion ya no se usa en las visualizaciones; devolver solo nombre
         return f"{nombre}"
     elif row.get("grupo") == "Administrativo":
         return f"Admin – {row.get('area_admin')}" if pd.notna(row.get("area_admin")) else "Administrativo"
@@ -471,7 +470,7 @@ with r3c1:
 # Nota: se eliminó la gráfica de 'Kg recolectados – Áreas de Operación' porque la nueva base no la requiere.
 
 
-# ── GRÁFICA: Ranking por Grupos Administrativos ────────────────────────
+# ── GRÁFICA: Ranking por Grupos Administrativos ─────────────────────────────
 st.markdown('<div class="section-title">🏷️ Ranking por Grupos Administrativos</div>', unsafe_allow_html=True)
 
 AREA_TO_GROUP_LOWER = {
@@ -600,6 +599,80 @@ with r4c2:
         st.plotly_chart(styled_fig(fig_rank), use_container_width=True)
     else:
         st.info("No hay datos de Operación para el ranking.")
+
+
+# ── NUEVA SECCIÓN: Gráficas por persona (Operación y Aceite) ────────────────
+st.markdown('<div class="section-title">👤 Gráficas por Persona — Operación y Aceite</div>', unsafe_allow_html=True)
+
+# 1) Solo operativos para la campaña de Botellas
+df_oper_botellas = df_f[
+    (df_f["grupo"] == "Operación") &
+    (df_f["botellas_kg"].fillna(0) > 0) &
+    df_f["nombre_operacion"].notna()
+].copy()
+
+if not df_oper_botellas.empty:
+    grp_bot = df_oper_botellas.groupby("nombre_operacion")["botellas_kg"].sum().reset_index()
+    grp_bot = grp_bot.sort_values("botellas_kg", ascending=False).head(10)
+    # For horizontal bar with highest on top
+    grp_bot_plot = grp_bot.sort_values("botellas_kg", ascending=True)
+    fig_oper_bot = px.bar(
+        grp_bot_plot, x="botellas_kg", y="nombre_operacion", orientation="h",
+        labels={"botellas_kg": "Kg (Botellas)", "nombre_operacion": "Persona"},
+        title="Top Operativos — Botellas (kg)"
+    )
+    fig_oper_bot.update_traces(marker_color=COLORS["botellas"], texttemplate="%{x:.1f}", textposition="outside")
+    fig_oper_bot.update_layout(height=420, margin=dict(l=140, r=20, t=40, b=20))
+    fig_oper_bot.update_yaxes(autorange="reversed")
+    st.plotly_chart(styled_fig(fig_oper_bot), use_container_width=True)
+else:
+    st.info("No hay operativos con participación en Botellas dentro del rango seleccionado.")
+
+# 2) Solo operativos para la campaña de Tapas
+df_oper_tapas = df_f[
+    (df_f["grupo"] == "Operación") &
+    (df_f["tapas_kg"].fillna(0) > 0) &
+    df_f["nombre_operacion"].notna()
+].copy()
+
+if not df_oper_tapas.empty:
+    grp_tap = df_oper_tapas.groupby("nombre_operacion")["tapas_kg"].sum().reset_index()
+    grp_tap = grp_tap.sort_values("tapas_kg", ascending=False).head(10)
+    grp_tap_plot = grp_tap.sort_values("tapas_kg", ascending=True)
+    fig_oper_tap = px.bar(
+        grp_tap_plot, x="tapas_kg", y="nombre_operacion", orientation="h",
+        labels={"tapas_kg": "Kg (Tapas)", "nombre_operacion": "Persona"},
+        title="Top Operativos — Tapas (kg)"
+    )
+    fig_oper_tap.update_traces(marker_color=COLORS["tapas"], texttemplate="%{x:.1f}", textposition="outside")
+    fig_oper_tap.update_layout(height=420, margin=dict(l=140, r=20, t=40, b=20))
+    fig_oper_tap.update_yaxes(autorange="reversed")
+    st.plotly_chart(styled_fig(fig_oper_tap), use_container_width=True)
+else:
+    st.info("No hay operativos con participación en Tapas dentro del rango seleccionado.")
+
+# 3) Todos los que tienen nombre y participan en Aceite (Operación o Administrativo), excluir Tiendas
+df_aceite_nombres = df_f[
+    (df_f["aceite_kg"].fillna(0) > 0) &
+    df_f["nombre_operacion"].notna() &  # nombre presente (puede ser administrativo o operativo)
+    (df_f["grupo"] != "Tienda")         # excluir tiendas
+].copy()
+
+if not df_aceite_nombres.empty:
+    grp_ace = df_aceite_nombres.groupby("nombre_operacion")["aceite_kg"].sum().reset_index()
+    grp_ace = grp_ace.sort_values("aceite_kg", ascending=False).head(20)
+    grp_ace_plot = grp_ace.sort_values("aceite_kg", ascending=True)
+    fig_ace = px.bar(
+        grp_ace_plot, x="aceite_kg", y="nombre_operacion", orientation="h",
+        labels={"aceite_kg": "Kg (Aceite)", "nombre_operacion": "Persona"},
+        title="Participantes con Nombre — Aceite (Operación + Administrativo)"
+    )
+    fig_ace.update_traces(marker_color=COLORS["aceite"], texttemplate="%{x:.1f}", textposition="outside")
+    fig_ace.update_layout(height=520, margin=dict(l=180, r=20, t=40, b=20))
+    fig_ace.update_yaxes(autorange="reversed")
+    st.plotly_chart(styled_fig(fig_ace), use_container_width=True)
+else:
+    st.info("No hay participantes con nombre que hayan participado en Aceite dentro del rango seleccionado.")
 
 
 # ── FILA 5: Heatmap de contribución ──────────────────────────────────────────
