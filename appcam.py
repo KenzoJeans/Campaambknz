@@ -666,33 +666,6 @@ if not df_heat.empty:
     )
     st.plotly_chart(fig_heat, use_container_width=True)
 
-
-# ══════════════════════════════════════════════
-# 10. RADAR — Grupos Administrativos
-# ══════════════════════════════════════════════
-if len(df_adm_gpo) >= 3:
-    st.markdown('<div class="section-header">🕸️ Radar — Grupos Administrativos</div>', unsafe_allow_html=True)
-    cats = ["Botellas con Amor","Tapas para Sanar"]
-    cr   = ["#059669","#2563eb","#d97706","#dc2626","#7c3aed","#0891b2"]
-    fig_r = go.Figure()
-    for i, row in df_adm_gpo.iterrows():
-        vals = [row["botellas_kg"], row["tapas_kg"]]
-        fig_r.add_trace(go.Scatterpolar(
-            r=vals+vals[:1], theta=cats+cats[:1],
-            fill="toself", name=row["nombre_grupo"],
-            line_color=cr[i % len(cr)],
-        ))
-    fig_r.update_layout(
-        polar=dict(radialaxis=dict(visible=True, tickfont=dict(size=9))),
-        showlegend=True,
-        title=dict(text="Radar de Desempeño — Grupos Administrativos (Botellas + Tapas)",
-                   font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-        paper_bgcolor="white", height=450,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.2),
-    )
-    st.plotly_chart(fig_r, use_container_width=True)
-
-
 # ══════════════════════════════════════════════
 # 11. TABLA DESCARGABLE
 # ══════════════════════════════════════════════
