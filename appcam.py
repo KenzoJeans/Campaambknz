@@ -596,11 +596,8 @@ with c2:
         f"🥇 Top {top_n} Administrativos — Tapas para Sanar", COLOR_TAPAS, top_n), use_container_width=True)
 
 
-# ══════════════════════════════════════════════
-# 8. GRUPOS ADMINISTRATIVOS INTERNOS
-# ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🏆 Competencia Interna — Grupos Administrativos</div>', unsafe_allow_html=True)
-
+ 
 df_adm_gpo = (
     df_admin[df_admin["grupo_admin"].notna()]
     .groupby("grupo_admin")[["botellas_kg","tapas_kg","aceite_kg"]].sum().reset_index()
@@ -608,7 +605,7 @@ df_adm_gpo = (
 df_adm_gpo["total_kg"]     = df_adm_gpo[["botellas_kg","tapas_kg","aceite_kg"]].sum(axis=1)
 df_adm_gpo["nombre_grupo"] = df_adm_gpo["grupo_admin"].map(GRUPO_NOMBRES)
 df_adm_gpo = df_adm_gpo.sort_values("total_kg", ascending=False)
-
+ 
 if not df_adm_gpo.empty:
     df_gm = df_adm_gpo.melt(
         id_vars=["nombre_grupo","total_kg"],
@@ -637,7 +634,6 @@ if not df_adm_gpo.empty:
     st.plotly_chart(fig_gs, use_container_width=True)
 else:
     st.info("No hay datos de grupos administrativos en el período seleccionado.")
-
 
 # ══════════════════════════════════════════════
 # 9. MAPA DE CALOR
