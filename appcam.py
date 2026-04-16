@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import numpy as np
 from datetime import datetime
+from io import StringIO
 
 # ── Configuración de página ──────────────────────────────────────────────────
 st.set_page_config(
@@ -118,7 +119,8 @@ def load_data(url: str) -> pd.DataFrame:
             expected_cols[2]:  "grupo",
             expected_cols[3]:  "area_admin",
             expected_cols[4]:  "nombre_operacion",
-            expected_cols[5]:  "area_operacion",
+            # expected_cols[5] used to be area_operacion in older schema; skip mapping to it
+            expected_cols[5]:  "area_operacion",  # keep mapping if present but may be NaN in new data
             expected_cols[6]:  "tienda",
             expected_cols[7]:  "botellas_raw",
             expected_cols[8]:  "tapas_raw",
@@ -180,8 +182,8 @@ def get_entity_label(row: pd.Series) -> str:
         return f"Tienda – {row.get('tienda')}" if pd.notna(row.get("tienda")) else "Tienda"
     elif row.get("grupo") == "Operación":
         nombre = row.get("nombre_operacion") if pd.notna(row.get("nombre_operacion")) else "—"
-        area   = row.get("area_operacion")   if pd.notna(row.get("area_operacion"))   else "—"
-        return f"{nombre} ({area})"
+        # area_operacion ya no se usa en las visualizaciones; devolver solo nombre
+        return f"{nombre}"
     elif row.get("grupo") == "Administrativo":
         return f"Admin – {row.get('area_admin')}" if pd.notna(row.get("area_admin")) else "Administrativo"
     return "Otro"
@@ -436,7 +438,7 @@ else:
     st.info("No hay datos de fecha o campañas seleccionadas para la evolución temporal.")
 
 
-# ── FILA 3: Desglose por área (solo Admin) ────────────────────────────────
+# ── FILA 3: Desglose por área (Admin) ───────────────────────────────────────
 st.markdown('<div class="section-title">🏢 Desglose por Área</div>', unsafe_allow_html=True)
 r3c1, r3c2 = st.columns(2)
 
@@ -466,16 +468,12 @@ with r3c1:
     else:
         st.info("No hay registros de Administrativo con los filtros actuales.")
 
+# Nota: se eliminó la gráfica de 'Kg recolectados – Áreas de Operación' porque la nueva base no la requiere.
+
+
 # ── GRÁFICA: Ranking por Grupos Administrativos ────────────────────────
 st.markdown('<div class="section-title">🏷️ Ranking por Grupos Administrativos</div>', unsafe_allow_html=True)
 
-# Definición de mapeo de áreas a grupos (según tu especificación)
-# Grupo 1 (SGA, SST, Sistemas, Inventarios, comercial)
-# Grupo 2 (Finanzas)
-# Grupo 3 (RRHH)
-# Grupo 4 (Diseño)
-# Grupo 5 (Mercadeo)
-# Grupo 6 (Tintoreria)
 AREA_TO_GROUP_LOWER = {
     "sga": "Grupo 1",
     "sst": "Grupo 1",
@@ -557,7 +555,11 @@ with r4c1:
             .reset_index()
         )
         tienda_sum["total_kg"] = tienda_sum[camp_cols_sel].sum(axis=1)
-        top_tiendas = tienda_sum.sort_values("total_kg", ascending=False).head(10)
+        top_tiendas = (
+            tienda_sum.sort_values("total_kg", ascending=False)
+            .head(10)
+            .drop(columns=["total_kg"])
+        )
 
         tienda_melt = top_tiendas.melt(id_vars="tienda", value_vars=camp_cols_sel,
                                        var_name="col", value_name="kg")
@@ -597,7 +599,8 @@ with r4c2:
         fig_rank.update_traces(marker_line_width=0)
         st.plotly_chart(styled_fig(fig_rank), use_container_width=True)
     else:
-        st.info("No hay datos de Operación para el ranking."
+        st.info("No hay datos de Operación para el ranking.")
+
 
 # ── FILA 5: Heatmap de contribución ──────────────────────────────────────────
 if camp_cols_sel:
@@ -624,7 +627,7 @@ st.markdown('<div class="section-title">🗃️ Datos Detallados</div>', unsafe_
 with st.expander("Ver tabla completa de registros", expanded=False):
     display_cols = [
         "fecha", "grupo", "area_admin", "nombre_operacion",
-        "area_operacion", "tienda", "botellas_kg", "tapas_kg", "aceite_kg",
+        "tienda", "botellas_kg", "tapas_kg", "aceite_kg",
     ]
     available_display_cols = [c for c in display_cols if c in df_f.columns]
     st.dataframe(
@@ -633,7 +636,6 @@ with st.expander("Ver tabla completa de registros", expanded=False):
             "grupo":            "Grupo",
             "area_admin":       "Área Admin",
             "nombre_operacion": "Persona Oper.",
-            "area_operacion":   "Área Oper.",
             "tienda":           "Tienda",
             "botellas_kg":      "Botellas (kg)",
             "tapas_kg":         "Tapas (kg)",
@@ -660,21 +662,6 @@ with st.expander("Ver estadísticas por campaña"):
     if camp_cols_sel:
         stats = df_f[camp_cols_sel].describe().T
         stats.index = [camp_labels[c] for c in stats.index]
-        stats = stats.rename(columns={
-            "count": "N participantes", "mean": "Promedio (kg)",
-            "std":   "Desv. estándar",  "min":  "Mínimo",
-            "25%":   "Q1", "50%": "Mediana", "75%": "Q3", "max": "Máximo",
-        })
-        st.dataframe(stats.style.format("{:.2f}"), use_container_width=True)
+        st.dataframe(stats, use_container_width=True)
     else:
-        st.info("No hay campañas seleccionadas para mostrar estadísticas.")
-
-
-# ── FOOTER ────────────────────────────────────────────────────────────────────
-st.markdown("---")
-st.markdown(
-    "<p style='text-align:center;color:#555;font-size:12px'>"
-    "🌱 Dashboard Campañas Ambientales · Datos en tiempo real desde Google Sheets · "
-    f"Última carga: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>",
-    unsafe_allow_html=True,
-)
+        st.info("Selecciona al menos una campaña para ver estadísticas.")
