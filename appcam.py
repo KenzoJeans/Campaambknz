@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
-import io
+from datetime import datetime, date
 
 # ──────────────────────────────────────────────
 # CONFIGURACIÓN PÁGINA
@@ -77,25 +77,34 @@ st.markdown("""
         margin: 1.5rem 0 1rem 0;
     }
     .stPlotlyChart { border-radius: 12px; overflow: hidden; }
+    .filter-badge {
+        background: #dcfce7;
+        color: #15803d;
+        border: 1px solid #86efac;
+        border-radius: 20px;
+        padding: 0.25rem 0.9rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+        display: inline-block;
+        margin-bottom: 0.8rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
-# PALETA DE COLORES
+# CONSTANTES
 # ──────────────────────────────────────────────
-PALETTE_GREEN  = ["#064e3b", "#065f46", "#047857", "#059669", "#10b981",
-                  "#34d399", "#6ee7b7", "#a7f3d0", "#d1fae5", "#ecfdf5"]
-PALETTE_BLUE   = ["#1e3a5f", "#1e40af", "#1d4ed8", "#2563eb", "#3b82f6",
-                  "#60a5fa", "#93c5fd", "#bfdbfe", "#dbeafe", "#eff6ff"]
-PALETTE_MULTI  = ["#059669", "#2563eb", "#d97706", "#dc2626", "#7c3aed",
-                  "#0891b2", "#be185d", "#65a30d", "#0f766e", "#c2410c"]
+URL_OFICIAL = (
+    "https://docs.google.com/spreadsheets/d/"
+    "157VmpJo9qvuKDmx12yya2E1caGa28HB4Kxd3-EeY_G8/export?format=csv"
+)
+
+PALETTE_MULTI  = ["#059669","#2563eb","#d97706","#dc2626","#7c3aed",
+                  "#0891b2","#be185d","#65a30d","#0f766e","#c2410c"]
 COLOR_BOTELLAS = "#059669"
 COLOR_TAPAS    = "#2563eb"
 COLOR_ACEITE   = "#d97706"
 
-# ──────────────────────────────────────────────
-# MAPEO GRUPOS ADMINISTRATIVOS
-# ──────────────────────────────────────────────
 ADMIN_GRUPOS = {
     "SGA":        "Grupo 1",
     "SST":        "Grupo 1",
@@ -124,112 +133,124 @@ GRUPO_NOMBRES = {
 # FUNCIONES AUXILIARES
 # ──────────────────────────────────────────────
 def clean_weight(series: pd.Series) -> pd.Series:
-    """Convierte 'No Participa' y variantes a 0, luego a float."""
     return (
-        series.replace(["No Participa", "No participa", "no participa", ""], 0)
+        series.replace(["No Participa","No participa","no participa",""], 0)
               .fillna(0)
               .astype(float)
     )
 
 
-def load_data(source) -> pd.DataFrame:
-    """Carga y normaliza el DataFrame desde varias fuentes."""
-    if isinstance(source, str):           # URL de Google Sheets
-        url = source.replace("/edit#gid=", "/export?format=csv&gid=")
-        url = url.replace("/edit?usp=sharing", "/export?format=csv")
-        if "export?format=csv" not in url:
-            url = url.rstrip("/") + "/export?format=csv"
-        df = pd.read_csv(url)
-    else:                                  # Archivo subido
-        name = source.name
-        if name.endswith(".csv"):
-            df = pd.read_csv(source)
-        else:
-            df = pd.read_excel(source, engine="openpyxl")
+def gs_url_to_csv(url: str) -> str:
+    if "export?format=csv" in url:
+        return url
+    if "/edit#gid=" in url:
+        return url.replace("/edit#gid=", "/export?format=csv&gid=")
+    if "/edit?usp=sharing" in url:
+        return url.replace("/edit?usp=sharing", "/export?format=csv")
+    if "/spreadsheets/d/" in url:
+        base = url.split("/edit")[0].split("/pub")[0]
+        return base.rstrip("/") + "/export?format=csv"
+    return url + "/export?format=csv"
 
-    # ── Renombrar columnas clave ──────────────────────────────────────
+
+def _normalize(df: pd.DataFrame) -> pd.DataFrame:
     rename_map = {}
     for col in df.columns:
-        col_lower = col.lower()
-        if "marca temporal" in col_lower or "timestamp" in col_lower:
+        cl = col.lower()
+        if "marca temporal" in cl or "timestamp" in cl:
             rename_map[col] = "timestamp"
-        elif "fecha" in col_lower and "marca" not in col_lower:
+        elif "fecha" in cl and "marca" not in cl:
             rename_map[col] = "fecha"
-        elif "grupo" in col_lower and "participac" in col_lower:
+        elif "grupo" in cl and "participac" in cl:
             rename_map[col] = "grupo"
-        elif "área" in col_lower or "area" in col_lower or "administrativo" in col_lower:
+        elif "área" in cl or "area" in cl or "administrativo" in cl:
             rename_map[col] = "area_admin"
-        elif "nombre" in col_lower or ("persona" in col_lower and "operac" in col_lower):
+        elif "nombre" in cl or ("persona" in cl and "operac" in cl):
             rename_map[col] = "nombre_persona"
-        elif "tienda" in col_lower and "pertenece" in col_lower:
+        elif "tienda" in cl and "pertenece" in cl:
             rename_map[col] = "tienda"
-        elif "botellas" in col_lower:
+        elif "botellas" in cl:
             rename_map[col] = "botellas_kg"
-        elif "tapas" in col_lower:
+        elif "tapas" in cl:
             rename_map[col] = "tapas_kg"
-        elif "aceite" in col_lower:
+        elif "aceite" in cl:
             rename_map[col] = "aceite_kg"
     df = df.rename(columns=rename_map)
 
-    # ── Columnas mínimas necesarias ───────────────────────────────────
-    for c in ["grupo", "area_admin", "nombre_persona", "tienda",
-              "botellas_kg", "tapas_kg", "aceite_kg"]:
+    for c in ["grupo","area_admin","nombre_persona","tienda",
+              "botellas_kg","tapas_kg","aceite_kg"]:
         if c not in df.columns:
             df[c] = "N/A"
 
-    # ── Limpiar N/A textuales ─────────────────────────────────────────
-    for c in ["grupo", "area_admin", "nombre_persona", "tienda"]:
-        df[c] = df[c].replace(["N/A", "n/a", "NA", "na", None], pd.NA).fillna("N/A")
+    for c in ["grupo","area_admin","nombre_persona","tienda"]:
+        df[c] = df[c].replace(["N/A","n/a","NA","na",None], pd.NA).fillna("N/A")
 
-    # ── Convertir pesos ───────────────────────────────────────────────
     df["botellas_kg"] = clean_weight(df["botellas_kg"])
     df["tapas_kg"]    = clean_weight(df["tapas_kg"])
     df["aceite_kg"]   = clean_weight(df["aceite_kg"])
-
-    # ── Normalizar grupo ──────────────────────────────────────────────
-    df["grupo"] = df["grupo"].str.strip().str.title()
-
-    # ── Grupo administrativo mapeado ──────────────────────────────────
+    df["grupo"]       = df["grupo"].str.strip().str.title()
     df["grupo_admin"] = df["area_admin"].map(ADMIN_GRUPOS)
+
+    # Parsear fecha
+    fecha_col = "fecha" if "fecha" in df.columns else ("timestamp" if "timestamp" in df.columns else None)
+    if fecha_col:
+        df["fecha_dt"] = pd.to_datetime(df[fecha_col], dayfirst=True, errors="coerce")
+    else:
+        df["fecha_dt"] = pd.NaT
 
     return df
 
 
-def top10_bar(df_filtered: pd.DataFrame, col_label: str, col_value: str,
-              title: str, color: str, top_n: int = 10) -> go.Figure:
-    """Crea un gráfico de barras horizontales Top-N."""
+@st.cache_data(show_spinner=False)
+def load_from_url(url: str) -> pd.DataFrame:
+    csv_url = gs_url_to_csv(url)
+    df = pd.read_csv(csv_url)
+    return _normalize(df)
+
+
+@st.cache_data(show_spinner=False)
+def load_from_bytes(file_bytes: bytes, file_name: str) -> pd.DataFrame:
+    import io
+    buf = io.BytesIO(file_bytes)
+    df = pd.read_csv(buf) if file_name.endswith(".csv") else pd.read_excel(buf, engine="openpyxl")
+    return _normalize(df)
+
+
+def top10_bar(df_in, col_label, col_value, title, color, top_n=10):
     df_plot = (
-        df_filtered.groupby(col_label, as_index=False)[col_value]
+        df_in.groupby(col_label, as_index=False)[col_value]
         .sum()
         .query(f"{col_value} > 0")
         .sort_values(col_value, ascending=False)
         .head(top_n)
-        .sort_values(col_value, ascending=True)   # ascendente para barras horiz.
+        .sort_values(col_value, ascending=True)
     )
     if df_plot.empty:
-        return go.Figure().update_layout(title=title + " — Sin datos")
-
+        fig = go.Figure()
+        fig.update_layout(
+            title=title + " — Sin datos",
+            paper_bgcolor="white",
+            annotations=[dict(
+                text="Sin registros para los filtros actuales",
+                xref="paper", yref="paper", x=0.5, y=0.5,
+                showarrow=False, font=dict(size=13, color="#9ca3af"),
+            )],
+        )
+        return fig
     fig = go.Figure(go.Bar(
-        x=df_plot[col_value],
-        y=df_plot[col_label],
-        orientation="h",
-        marker=dict(
-            color=df_plot[col_value],
-            colorscale=[[0, "#d1fae5"], [1, color]],
-            showscale=False,
-            line=dict(color="white", width=0.5),
-        ),
+        x=df_plot[col_value], y=df_plot[col_label], orientation="h",
+        marker=dict(color=df_plot[col_value],
+                    colorscale=[[0,"#d1fae5"],[1,color]],
+                    showscale=False, line=dict(color="white", width=0.5)),
         text=[f"{v:.1f} kg" for v in df_plot[col_value]],
         textposition="outside",
         hovertemplate="%{y}: %{x:.2f} kg<extra></extra>",
     ))
     fig.update_layout(
         title=dict(text=title, font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-        xaxis_title="kg recolectados",
-        yaxis_title="",
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        margin=dict(l=10, r=60, t=50, b=30),
+        xaxis_title="kg recolectados", yaxis_title="",
+        plot_bgcolor="white", paper_bgcolor="white",
+        margin=dict(l=10, r=70, t=50, b=30),
         height=max(300, top_n * 38),
         xaxis=dict(gridcolor="#f0f0f0", showgrid=True),
         yaxis=dict(tickfont=dict(size=11)),
@@ -242,84 +263,150 @@ def top10_bar(df_filtered: pd.DataFrame, col_label: str, col_value: str,
 # SIDEBAR
 # ══════════════════════════════════════════════
 with st.sidebar:
-    st.image("https://img.icons8.com/color/96/leaf.png", width=70)
+    st.image("https://img.icons8.com/color/96/leaf.png", width=64)
     st.markdown("## 🌿 Campañas Ambientales")
     st.markdown("---")
+
+    # ── Fuente de datos ───────────────────────────────────────────────
     st.markdown("### 📂 Fuente de datos")
+    modo = st.radio(
+        "Selecciona el modo de carga:",
+        ["🔗 Base de datos oficial", "🌐 Otra URL de Google Sheets", "📎 Subir archivo"],
+        index=0,
+    )
 
-    modo = st.radio("Selecciona el modo de carga:", ["📎 Subir archivo", "🔗 URL Google Sheets"])
+    data_key   = None
+    data_bytes = None
+    data_fname = None
 
-    data_source = None
-    if modo == "📎 Subir archivo":
-        data_source = st.file_uploader(
-            "Sube el archivo CSV o Excel:",
-            type=["csv", "xlsx", "xls"],
-            help="Exporta la hoja de cálculo en formato CSV o Excel.",
-        )
-    else:
+    if modo == "🔗 Base de datos oficial":
+        st.success("✅ Conectado a la base de datos oficial del proyecto.")
+        data_key = URL_OFICIAL
+
+    elif modo == "🌐 Otra URL de Google Sheets":
         gs_url = st.text_input(
             "URL de Google Sheets:",
             placeholder="https://docs.google.com/spreadsheets/d/...",
-            help="La hoja debe estar publicada (Archivo → Publicar en la web → CSV).",
+            help="La hoja debe tener acceso de lectura público o estar publicada en la web.",
         )
         if gs_url.strip():
-            data_source = gs_url.strip()
+            data_key = gs_url.strip()
+        else:
+            st.info("Ingresa la URL para continuar.")
+
+    else:
+        uploaded = st.file_uploader("Sube el archivo (CSV o Excel):", type=["csv","xlsx","xls"])
+        if uploaded:
+            data_bytes = uploaded.getvalue()
+            data_fname = uploaded.name
+            data_key   = data_fname
+
+    # ── Botón de refresco ─────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🔄 Actualizar datos")
+    st.caption("Úsalo cuando se hayan agregado nuevos registros a la fuente.")
+    if st.button("↺  Refrescar datos ahora", type="primary", use_container_width=True):
+        st.cache_data.clear()
+        st.toast("✅ Caché limpiado — recargando datos...", icon="🔄")
+        st.rerun()
+
+    # ── Filtro por fecha ──────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🗓️ Filtro por Fecha")
+    usar_filtro = st.checkbox("Activar filtro de fecha", value=False)
+    fecha_inicio = fecha_fin = None
+    if usar_filtro:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            fecha_inicio = st.date_input("Desde:", value=date(2025, 1, 1), key="fi",
+                                         label_visibility="visible")
+        with col_b:
+            fecha_fin = st.date_input("Hasta:", value=date.today(), key="ff",
+                                      label_visibility="visible")
+        if fecha_inicio > fecha_fin:
+            st.error("⚠️ La fecha de inicio debe ser anterior a la de fin.")
+
+    # ── Opciones de gráficas ──────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🎛️ Opciones de gráficas")
+    top_n = st.slider("Posiciones en Rankings:", 5, 20, 10)
 
     st.markdown("---")
-    st.markdown("### 🎛️ Filtros")
-    top_n = st.slider("Número de posiciones en Rankings:", 5, 20, 10)
-
-    st.markdown("---")
-    st.caption("Dashboard creado con Streamlit + Plotly")
+    st.caption("Dashboard · Streamlit + Plotly")
 
 
 # ══════════════════════════════════════════════
 # CABECERA
 # ══════════════════════════════════════════════
 st.markdown('<div class="main-title">🌿 Dashboard Campañas Ambientales</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Botellas con Amor &nbsp;|&nbsp; Tapas para Sanar &nbsp;|&nbsp; Aceite Green Fuel</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="subtitle">Botellas con Amor &nbsp;|&nbsp; Tapas para Sanar &nbsp;|&nbsp; Aceite Green Fuel</div>',
+    unsafe_allow_html=True,
+)
 
 # ══════════════════════════════════════════════
 # CARGA DE DATOS
 # ══════════════════════════════════════════════
-if data_source is None:
-    st.info("👈 Carga un archivo o ingresa la URL de tu Google Sheet en el panel lateral para comenzar.")
+if data_key is None:
+    st.info("👈 Selecciona una fuente de datos en el panel lateral para comenzar.")
     st.stop()
 
 try:
-    with st.spinner("Cargando y procesando datos..."):
-        df = load_data(data_source)
+    with st.spinner("⏳ Cargando datos..."):
+        if data_bytes is not None:
+            df_raw = load_from_bytes(data_bytes, data_fname)
+        else:
+            df_raw = load_from_url(data_key)
 except Exception as e:
     st.error(f"❌ Error al cargar los datos: {e}")
     st.stop()
 
-# ──────────────────────────────────────────────
-# SUBCONJUNTOS
-# ──────────────────────────────────────────────
-df_op    = df[df["grupo"].str.lower() == "operación"].copy()
-df_admin = df[df["grupo"].str.lower() == "administrativo"].copy()
-df_tienda= df[df["grupo"].str.lower() == "tienda"].copy()
+# ── Aplicar filtro de fecha ───────────────────────────────────────────
+if usar_filtro and fecha_inicio and fecha_fin and fecha_inicio <= fecha_fin:
+    mask = (
+        (df_raw["fecha_dt"].dt.date >= fecha_inicio) &
+        (df_raw["fecha_dt"].dt.date <= fecha_fin)
+    )
+    df = df_raw[mask].copy()
+    badge_txt = (
+        f"🗓️ Filtro activo: {fecha_inicio.strftime('%d/%m/%Y')} → "
+        f"{fecha_fin.strftime('%d/%m/%Y')} &nbsp;·&nbsp; "
+        f"<b>{len(df)}</b> de <b>{len(df_raw)}</b> registros"
+    )
+else:
+    df = df_raw.copy()
+    badge_txt = f"📋 Todos los registros: <b>{len(df)}</b>"
+
+st.markdown(f'<div class="filter-badge">{badge_txt}</div>', unsafe_allow_html=True)
+
+if df.empty:
+    st.warning("⚠️ No hay datos para el período seleccionado. Ajusta el filtro de fechas.")
+    st.stop()
+
+# ── Subconjuntos por grupo ────────────────────────────────────────────
+df_op     = df[df["grupo"].str.lower() == "operación"].copy()
+df_admin  = df[df["grupo"].str.lower() == "administrativo"].copy()
+df_tienda = df[df["grupo"].str.lower() == "tienda"].copy()
+
 
 # ══════════════════════════════════════════════
 # 0. KPIs GENERALES
 # ══════════════════════════════════════════════
 st.markdown('<div class="section-header">📊 Resumen General</div>', unsafe_allow_html=True)
 
-total_participantes = len(df)
-total_botellas      = df["botellas_kg"].sum()
-total_tapas         = df["tapas_kg"].sum()
-total_aceite        = df["aceite_kg"].sum()
-total_kg            = total_botellas + total_tapas + total_aceite
+total_botellas = df["botellas_kg"].sum()
+total_tapas    = df["tapas_kg"].sum()
+total_aceite   = df["aceite_kg"].sum()
+total_kg       = total_botellas + total_tapas + total_aceite
 
 cols_kpi = st.columns(5)
-kpis = [
-    ("👥", f"{total_participantes}", "Participantes"),
+for col, (icon, val, label) in zip(cols_kpi, [
+    ("👥", f"{len(df)}",             "Participantes"),
     ("♻️", f"{total_botellas:.1f} kg", "Botellas con Amor"),
-    ("🔵", f"{total_tapas:.1f} kg", "Tapas para Sanar"),
-    ("🛢️", f"{total_aceite:.1f} kg", "Aceite Green Fuel"),
-    ("⚖️", f"{total_kg:.1f} kg", "Total Recolectado"),
-]
-for col, (icon, val, label) in zip(cols_kpi, kpis):
+    ("🔵", f"{total_tapas:.1f} kg",    "Tapas para Sanar"),
+    ("🛢️", f"{total_aceite:.1f} kg",  "Aceite Green Fuel"),
+    ("⚖️", f"{total_kg:.1f} kg",       "Total Recolectado"),
+]):
     with col:
         st.markdown(f"""
         <div class="metric-card">
@@ -328,365 +415,300 @@ for col, (icon, val, label) in zip(cols_kpi, kpis):
             <div class="metric-label">{label}</div>
         </div>""", unsafe_allow_html=True)
 
+st.markdown("<br>", unsafe_allow_html=True)
+
 
 # ══════════════════════════════════════════════
-# 1. TORTA — % Participación por Grupos
+# 1. % PARTICIPACIÓN POR GRUPOS
 # ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🥧 Participación por Grupos</div>', unsafe_allow_html=True)
 
-c1, c2 = st.columns([1, 1])
-
+c1, c2 = st.columns(2)
 with c1:
     part_grupo = df["grupo"].value_counts().reset_index()
     part_grupo.columns = ["Grupo", "Participantes"]
     fig_pie = px.pie(
-        part_grupo,
-        values="Participantes",
-        names="Grupo",
+        part_grupo, values="Participantes", names="Grupo",
         title="% Participación por Grupo",
-        color_discrete_sequence=PALETTE_MULTI,
-        hole=0.42,
+        color_discrete_sequence=PALETTE_MULTI, hole=0.42,
     )
     fig_pie.update_traces(
-        textposition="outside",
-        textinfo="percent+label",
+        textposition="outside", textinfo="percent+label",
         hovertemplate="<b>%{label}</b><br>Participantes: %{value}<br>%{percent}<extra></extra>",
     )
     fig_pie.update_layout(
         title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
         legend=dict(orientation="h", yanchor="bottom", y=-0.25),
-        margin=dict(t=50, b=20),
-        paper_bgcolor="white",
-        height=380,
+        margin=dict(t=50, b=20), paper_bgcolor="white", height=380,
     )
     st.plotly_chart(fig_pie, use_container_width=True)
 
 with c2:
-    # Kg recolectados por grupo
-    df_grupo_kg = df.groupby("grupo")[["botellas_kg","tapas_kg","aceite_kg"]].sum().reset_index()
-    df_grupo_kg_melt = df_grupo_kg.melt(id_vars="grupo", var_name="Campaña", value_name="kg")
-    df_grupo_kg_melt["Campaña"] = df_grupo_kg_melt["Campaña"].map({
-        "botellas_kg": "Botellas con Amor",
-        "tapas_kg":    "Tapas para Sanar",
-        "aceite_kg":   "Aceite Green Fuel",
+    df_gkg = df.groupby("grupo")[["botellas_kg","tapas_kg","aceite_kg"]].sum().reset_index()
+    df_gkg_m = df_gkg.melt(id_vars="grupo", var_name="Campaña", value_name="kg")
+    df_gkg_m["Campaña"] = df_gkg_m["Campaña"].map({
+        "botellas_kg":"Botellas con Amor","tapas_kg":"Tapas para Sanar","aceite_kg":"Aceite Green Fuel"
     })
-    fig_bar_grupo = px.bar(
-        df_grupo_kg_melt.query("kg > 0"),
-        x="grupo", y="kg", color="Campaña",
-        barmode="group",
+    fig_bg = px.bar(
+        df_gkg_m.query("kg > 0"), x="grupo", y="kg", color="Campaña", barmode="group",
         title="Kg recolectados por Grupo y Campaña",
         color_discrete_map={
-            "Botellas con Amor": COLOR_BOTELLAS,
-            "Tapas para Sanar":  COLOR_TAPAS,
-            "Aceite Green Fuel": COLOR_ACEITE,
-        },
-        text_auto=".1f",
+            "Botellas con Amor":COLOR_BOTELLAS,"Tapas para Sanar":COLOR_TAPAS,"Aceite Green Fuel":COLOR_ACEITE
+        }, text_auto=".1f",
     )
-    fig_bar_grupo.update_layout(
+    fig_bg.update_layout(
         title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-        plot_bgcolor="white", paper_bgcolor="white",
-        xaxis_title="", yaxis_title="kg",
-        legend=dict(orientation="h", yanchor="bottom", y=-0.35),
-        height=380,
+        plot_bgcolor="white", paper_bgcolor="white", xaxis_title="", yaxis_title="kg",
+        legend=dict(orientation="h", yanchor="bottom", y=-0.35), height=380,
     )
-    st.plotly_chart(fig_bar_grupo, use_container_width=True)
+    st.plotly_chart(fig_bg, use_container_width=True)
 
 
 # ══════════════════════════════════════════════
-# 2. TORTA — % Contribución por Campaña
+# 2. DISTRIBUCIÓN POR CAMPAÑA
 # ══════════════════════════════════════════════
 st.markdown('<div class="section-header">📈 Distribución por Campaña</div>', unsafe_allow_html=True)
 
 c1, c2 = st.columns(2)
 with c1:
-    camp_totales = pd.DataFrame({
-        "Campaña": ["Botellas con Amor", "Tapas para Sanar", "Aceite Green Fuel"],
-        "kg": [total_botellas, total_tapas, total_aceite],
+    camp_tot = pd.DataFrame({
+        "Campaña":["Botellas con Amor","Tapas para Sanar","Aceite Green Fuel"],
+        "kg":[total_botellas, total_tapas, total_aceite],
     })
     fig_camp = px.pie(
-        camp_totales, values="kg", names="Campaña",
-        title="Distribución de kg por Campaña",
+        camp_tot, values="kg", names="Campaña", title="Distribución de kg por Campaña",
         color_discrete_map={
-            "Botellas con Amor": COLOR_BOTELLAS,
-            "Tapas para Sanar":  COLOR_TAPAS,
-            "Aceite Green Fuel": COLOR_ACEITE,
-        },
-        hole=0.42,
+            "Botellas con Amor":COLOR_BOTELLAS,"Tapas para Sanar":COLOR_TAPAS,"Aceite Green Fuel":COLOR_ACEITE
+        }, hole=0.42,
     )
     fig_camp.update_traces(
-        textposition="outside",
-        textinfo="percent+label",
+        textposition="outside", textinfo="percent+label",
         hovertemplate="<b>%{label}</b><br>%{value:.1f} kg (%{percent})<extra></extra>",
     )
     fig_camp.update_layout(
         title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
         legend=dict(orientation="h", yanchor="bottom", y=-0.25),
-        paper_bgcolor="white",
-        height=360,
+        paper_bgcolor="white", height=360,
     )
     st.plotly_chart(fig_camp, use_container_width=True)
 
 with c2:
-    # Participantes por campaña (quiénes SI participan)
-    part_b = (df["botellas_kg"] > 0).sum()
-    part_t = (df["tapas_kg"] > 0).sum()
-    part_a = (df["aceite_kg"] > 0).sum()
-    df_part_camp = pd.DataFrame({
-        "Campaña": ["Botellas con Amor", "Tapas para Sanar", "Aceite Green Fuel"],
-        "Participantes": [part_b, part_t, part_a],
+    df_pc = pd.DataFrame({
+        "Campaña":["Botellas con Amor","Tapas para Sanar","Aceite Green Fuel"],
+        "Participantes":[(df["botellas_kg"]>0).sum(),(df["tapas_kg"]>0).sum(),(df["aceite_kg"]>0).sum()],
     })
-    fig_part_camp = px.bar(
-        df_part_camp, x="Campaña", y="Participantes",
-        title="Número de Participantes por Campaña",
+    fig_pcamp = px.bar(
+        df_pc, x="Campaña", y="Participantes", title="Participantes por Campaña",
         color="Campaña",
         color_discrete_map={
-            "Botellas con Amor": COLOR_BOTELLAS,
-            "Tapas para Sanar":  COLOR_TAPAS,
-            "Aceite Green Fuel": COLOR_ACEITE,
-        },
-        text="Participantes",
+            "Botellas con Amor":COLOR_BOTELLAS,"Tapas para Sanar":COLOR_TAPAS,"Aceite Green Fuel":COLOR_ACEITE
+        }, text="Participantes",
     )
-    fig_part_camp.update_traces(textposition="outside")
-    fig_part_camp.update_layout(
+    fig_pcamp.update_traces(textposition="outside")
+    fig_pcamp.update_layout(
         title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-        showlegend=False,
-        plot_bgcolor="white", paper_bgcolor="white",
-        height=360,
-        yaxis_title="Personas",
-        xaxis_title="",
+        showlegend=False, plot_bgcolor="white", paper_bgcolor="white",
+        height=360, yaxis_title="Personas", xaxis_title="",
     )
-    st.plotly_chart(fig_part_camp, use_container_width=True)
+    st.plotly_chart(fig_pcamp, use_container_width=True)
 
 
 # ══════════════════════════════════════════════
-# 3. RANKINGS — OPERADORES
+# 3. EVOLUCIÓN TEMPORAL (solo si hay >1 fecha)
+# ══════════════════════════════════════════════
+if df["fecha_dt"].dropna().dt.date.nunique() > 1:
+    st.markdown('<div class="section-header">📅 Evolución Temporal</div>', unsafe_allow_html=True)
+    df_time = (
+        df.groupby(df["fecha_dt"].dt.date)[["botellas_kg","tapas_kg","aceite_kg"]]
+        .sum().reset_index().rename(columns={"fecha_dt":"Fecha"})
+    )
+    df_tm = df_time.melt(id_vars="Fecha", var_name="Campaña", value_name="kg")
+    df_tm["Campaña"] = df_tm["Campaña"].map({
+        "botellas_kg":"Botellas con Amor","tapas_kg":"Tapas para Sanar","aceite_kg":"Aceite Green Fuel"
+    })
+    fig_time = px.line(
+        df_tm, x="Fecha", y="kg", color="Campaña", markers=True,
+        title="Recolección acumulada por Fecha",
+        color_discrete_map={
+            "Botellas con Amor":COLOR_BOTELLAS,"Tapas para Sanar":COLOR_TAPAS,"Aceite Green Fuel":COLOR_ACEITE
+        },
+    )
+    fig_time.update_layout(
+        title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
+        plot_bgcolor="white", paper_bgcolor="white",
+        xaxis_title="Fecha", yaxis_title="kg", height=320,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.3),
+    )
+    st.plotly_chart(fig_time, use_container_width=True)
+
+
+# ══════════════════════════════════════════════
+# 4. RANKINGS — OPERADORES
 # ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🏭 Rankings — Operadores</div>', unsafe_allow_html=True)
-
 c1, c2 = st.columns(2)
 with c1:
-    fig_op_bot = top10_bar(
-        df_op, "nombre_persona", "botellas_kg",
-        f"🥇 Top {top_n} Operadores — Botellas con Amor", COLOR_BOTELLAS, top_n
-    )
-    st.plotly_chart(fig_op_bot, use_container_width=True)
-
+    st.plotly_chart(top10_bar(df_op, "nombre_persona", "botellas_kg",
+        f"🥇 Top {top_n} Operadores — Botellas con Amor", COLOR_BOTELLAS, top_n), use_container_width=True)
 with c2:
-    fig_op_tap = top10_bar(
-        df_op, "nombre_persona", "tapas_kg",
-        f"🥇 Top {top_n} Operadores — Tapas para Sanar", COLOR_TAPAS, top_n
-    )
-    st.plotly_chart(fig_op_tap, use_container_width=True)
+    st.plotly_chart(top10_bar(df_op, "nombre_persona", "tapas_kg",
+        f"🥇 Top {top_n} Operadores — Tapas para Sanar", COLOR_TAPAS, top_n), use_container_width=True)
 
 
 # ══════════════════════════════════════════════
-# 4. RANKINGS — TIENDAS
+# 5. RANKINGS — TIENDAS
 # ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🏪 Rankings — Tiendas</div>', unsafe_allow_html=True)
-
 c1, c2 = st.columns(2)
 with c1:
-    fig_t_bot = top10_bar(
-        df_tienda, "tienda", "botellas_kg",
-        f"🥇 Top {top_n} Tiendas — Botellas con Amor", COLOR_BOTELLAS, top_n
-    )
-    st.plotly_chart(fig_t_bot, use_container_width=True)
-
+    st.plotly_chart(top10_bar(df_tienda, "tienda", "botellas_kg",
+        f"🥇 Top {top_n} Tiendas — Botellas con Amor", COLOR_BOTELLAS, top_n), use_container_width=True)
 with c2:
-    fig_t_tap = top10_bar(
-        df_tienda, "tienda", "tapas_kg",
-        f"🥇 Top {top_n} Tiendas — Tapas para Sanar", COLOR_TAPAS, top_n
-    )
-    st.plotly_chart(fig_t_tap, use_container_width=True)
+    st.plotly_chart(top10_bar(df_tienda, "tienda", "tapas_kg",
+        f"🥇 Top {top_n} Tiendas — Tapas para Sanar", COLOR_TAPAS, top_n), use_container_width=True)
 
 
 # ══════════════════════════════════════════════
-# 5. RANKING — ACEITE (TODOS LOS GRUPOS, POR PERSONA)
+# 6. RANKING — ACEITE (TODOS LOS GRUPOS)
 # ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🛢️ Ranking — Aceite Green Fuel (Todos los Grupos)</div>', unsafe_allow_html=True)
-
-# Construir etiqueta: nombre_persona si existe, sino area_admin o tienda
 df_aceite_all = df.copy()
 df_aceite_all["etiqueta"] = df_aceite_all.apply(
     lambda r: r["nombre_persona"] if r["nombre_persona"] != "N/A"
-    else (r["area_admin"] if r["area_admin"] != "N/A"
-          else r["tienda"]),
-    axis=1,
-)
-fig_aceite = top10_bar(
-    df_aceite_all, "etiqueta", "aceite_kg",
-    f"🛢️ Top {top_n} — Aceite Green Fuel (Todos los grupos)", COLOR_ACEITE, top_n
-)
-st.plotly_chart(fig_aceite, use_container_width=True)
+              else (r["area_admin"] if r["area_admin"] != "N/A" else r["tienda"]), axis=1)
+st.plotly_chart(top10_bar(df_aceite_all, "etiqueta", "aceite_kg",
+    f"🛢️ Top {top_n} — Aceite Green Fuel (Todos los grupos)", COLOR_ACEITE, top_n),
+    use_container_width=True)
 
 
 # ══════════════════════════════════════════════
-# 6. RANKINGS — ADMINISTRATIVOS
+# 7. RANKINGS — ADMINISTRATIVOS
 # ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🏢 Rankings — Administrativos</div>', unsafe_allow_html=True)
-
-# Etiqueta: si hay nombre_persona se usa, si no el area_admin
 df_admin["etiqueta"] = df_admin.apply(
-    lambda r: r["nombre_persona"] if r["nombre_persona"] != "N/A"
-    else r["area_admin"],
-    axis=1,
-)
-
+    lambda r: r["nombre_persona"] if r["nombre_persona"] != "N/A" else r["area_admin"], axis=1)
 c1, c2 = st.columns(2)
 with c1:
-    fig_adm_bot = top10_bar(
-        df_admin, "etiqueta", "botellas_kg",
-        f"🥇 Top {top_n} Administrativos — Botellas con Amor", COLOR_BOTELLAS, top_n
-    )
-    st.plotly_chart(fig_adm_bot, use_container_width=True)
-
+    st.plotly_chart(top10_bar(df_admin, "etiqueta", "botellas_kg",
+        f"🥇 Top {top_n} Administrativos — Botellas con Amor", COLOR_BOTELLAS, top_n), use_container_width=True)
 with c2:
-    fig_adm_tap = top10_bar(
-        df_admin, "etiqueta", "tapas_kg",
-        f"🥇 Top {top_n} Administrativos — Tapas para Sanar", COLOR_TAPAS, top_n
-    )
-    st.plotly_chart(fig_adm_tap, use_container_width=True)
+    st.plotly_chart(top10_bar(df_admin, "etiqueta", "tapas_kg",
+        f"🥇 Top {top_n} Administrativos — Tapas para Sanar", COLOR_TAPAS, top_n), use_container_width=True)
 
 
 # ══════════════════════════════════════════════
-# 7. RANKING — ADMINISTRATIVOS POR GRUPO INTERNO
+# 8. GRUPOS ADMINISTRATIVOS INTERNOS
 # ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🏆 Competencia Interna — Grupos Administrativos</div>', unsafe_allow_html=True)
 
-df_admin_gpo = (
+df_adm_gpo = (
     df_admin[df_admin["grupo_admin"].notna()]
-    .groupby("grupo_admin")[["botellas_kg", "tapas_kg", "aceite_kg"]]
-    .sum()
-    .reset_index()
+    .groupby("grupo_admin")[["botellas_kg","tapas_kg","aceite_kg"]].sum().reset_index()
 )
-df_admin_gpo["total_kg"]      = df_admin_gpo[["botellas_kg","tapas_kg","aceite_kg"]].sum(axis=1)
-df_admin_gpo["nombre_grupo"]  = df_admin_gpo["grupo_admin"].map(GRUPO_NOMBRES)
-df_admin_gpo = df_admin_gpo.sort_values("total_kg", ascending=False)
+df_adm_gpo["total_kg"]     = df_adm_gpo[["botellas_kg","tapas_kg","aceite_kg"]].sum(axis=1)
+df_adm_gpo["nombre_grupo"] = df_adm_gpo["grupo_admin"].map(GRUPO_NOMBRES)
+df_adm_gpo = df_adm_gpo.sort_values("total_kg", ascending=False)
 
-# Barras apiladas por grupo interno
-df_gpo_melt = df_admin_gpo.melt(
-    id_vars=["nombre_grupo","total_kg"],
-    value_vars=["botellas_kg","tapas_kg","aceite_kg"],
-    var_name="Campaña", value_name="kg"
-)
-df_gpo_melt["Campaña"] = df_gpo_melt["Campaña"].map({
-    "botellas_kg": "Botellas con Amor",
-    "tapas_kg":    "Tapas para Sanar",
-    "aceite_kg":   "Aceite Green Fuel",
-})
-
-fig_gpo_stack = px.bar(
-    df_gpo_melt.query("kg > 0"),
-    x="kg", y="nombre_grupo", orientation="h",
-    color="Campaña",
-    barmode="stack",
-    title="Ranking Grupos Administrativos — Total por Campaña",
-    color_discrete_map={
-        "Botellas con Amor": COLOR_BOTELLAS,
-        "Tapas para Sanar":  COLOR_TAPAS,
-        "Aceite Green Fuel": COLOR_ACEITE,
-    },
-    text_auto=".1f",
-)
-fig_gpo_stack.update_layout(
-    title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-    plot_bgcolor="white", paper_bgcolor="white",
-    xaxis_title="kg recolectados",
-    yaxis_title="",
-    legend=dict(orientation="h", yanchor="bottom", y=-0.2),
-    height=max(350, len(df_admin_gpo) * 55 + 80),
-    margin=dict(l=10, r=60, t=50, b=60),
-)
-st.plotly_chart(fig_gpo_stack, use_container_width=True)
+if not df_adm_gpo.empty:
+    df_gm = df_adm_gpo.melt(
+        id_vars=["nombre_grupo","total_kg"],
+        value_vars=["botellas_kg","tapas_kg","aceite_kg"],
+        var_name="Campaña", value_name="kg"
+    )
+    df_gm["Campaña"] = df_gm["Campaña"].map({
+        "botellas_kg":"Botellas con Amor","tapas_kg":"Tapas para Sanar","aceite_kg":"Aceite Green Fuel"
+    })
+    fig_gs = px.bar(
+        df_gm.query("kg > 0"), x="kg", y="nombre_grupo", orientation="h",
+        color="Campaña", barmode="stack",
+        title="Ranking Grupos Administrativos — Total por Campaña",
+        color_discrete_map={
+            "Botellas con Amor":COLOR_BOTELLAS,"Tapas para Sanar":COLOR_TAPAS,"Aceite Green Fuel":COLOR_ACEITE
+        }, text_auto=".1f",
+    )
+    fig_gs.update_layout(
+        title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
+        plot_bgcolor="white", paper_bgcolor="white",
+        xaxis_title="kg recolectados", yaxis_title="",
+        legend=dict(orientation="h", yanchor="bottom", y=-0.2),
+        height=max(350, len(df_adm_gpo)*55+80),
+        margin=dict(l=10, r=60, t=50, b=60),
+    )
+    st.plotly_chart(fig_gs, use_container_width=True)
+else:
+    st.info("No hay datos de grupos administrativos en el período seleccionado.")
 
 
 # ══════════════════════════════════════════════
-# 8. MAPA DE CALOR — Participación por Área y Campaña
+# 9. MAPA DE CALOR
 # ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🌡️ Mapa de Calor — Área Administrativa vs Campaña</div>', unsafe_allow_html=True)
-
 df_heat = (
     df_admin.groupby("area_admin")[["botellas_kg","tapas_kg","aceite_kg"]].sum()
-    .rename(columns={
-        "botellas_kg": "Botellas con Amor",
-        "tapas_kg":    "Tapas para Sanar",
-        "aceite_kg":   "Aceite Green Fuel",
-    })
-    .query("(`Botellas con Amor` + `Tapas para Sanar` + `Aceite Green Fuel`) > 0")
+    .rename(columns={"botellas_kg":"Botellas con Amor","tapas_kg":"Tapas para Sanar","aceite_kg":"Aceite Green Fuel"})
+    .query("`Botellas con Amor` + `Tapas para Sanar` + `Aceite Green Fuel` > 0")
 )
 if not df_heat.empty:
     fig_heat = px.imshow(
-        df_heat,
-        text_auto=".1f",
-        title="Mapa de Calor — Kg recolectados por Área y Campaña",
-        color_continuous_scale="Greens",
-        aspect="auto",
+        df_heat, text_auto=".1f",
+        title="Mapa de Calor — Kg por Área y Campaña",
+        color_continuous_scale="Greens", aspect="auto",
     )
     fig_heat.update_layout(
         title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-        paper_bgcolor="white",
-        height=max(300, len(df_heat) * 40 + 100),
+        paper_bgcolor="white", height=max(300, len(df_heat)*40+100),
         coloraxis_colorbar_title="kg",
     )
     st.plotly_chart(fig_heat, use_container_width=True)
 
 
 # ══════════════════════════════════════════════
-# 9. RADAR — Grupos Administrativos
+# 10. RADAR — Grupos Administrativos
 # ══════════════════════════════════════════════
-if len(df_admin_gpo) >= 3:
+if len(df_adm_gpo) >= 3:
     st.markdown('<div class="section-header">🕸️ Radar — Grupos Administrativos</div>', unsafe_allow_html=True)
-
-    categories = ["Botellas con Amor", "Tapas para Sanar", "Aceite Green Fuel"]
-    fig_radar = go.Figure()
-    colors_radar = ["#059669","#2563eb","#d97706","#dc2626","#7c3aed","#0891b2"]
-    for i, row in df_admin_gpo.iterrows():
-        values = [row["botellas_kg"], row["tapas_kg"], row["aceite_kg"]]
-        values += values[:1]
-        cats   = categories + categories[:1]
-        fig_radar.add_trace(go.Scatterpolar(
-            r=values, theta=cats,
+    cats = ["Botellas con Amor","Tapas para Sanar","Aceite Green Fuel"]
+    cr   = ["#059669","#2563eb","#d97706","#dc2626","#7c3aed","#0891b2"]
+    fig_r = go.Figure()
+    for i, row in df_adm_gpo.iterrows():
+        vals = [row["botellas_kg"], row["tapas_kg"], row["aceite_kg"]]
+        fig_r.add_trace(go.Scatterpolar(
+            r=vals+vals[:1], theta=cats+cats[:1],
             fill="toself", name=row["nombre_grupo"],
-            line_color=colors_radar[i % len(colors_radar)],
+            line_color=cr[i % len(cr)],
         ))
-    fig_radar.update_layout(
+    fig_r.update_layout(
         polar=dict(radialaxis=dict(visible=True, tickfont=dict(size=9))),
         showlegend=True,
-        title=dict(
-            text="Radar de Desempeño — Grupos Administrativos",
-            font=dict(family="Montserrat", size=14, color="#1a6b3c")
-        ),
-        paper_bgcolor="white",
-        height=450,
+        title=dict(text="Radar de Desempeño — Grupos Administrativos",
+                   font=dict(family="Montserrat", size=14, color="#1a6b3c")),
+        paper_bgcolor="white", height=450,
         legend=dict(orientation="h", yanchor="bottom", y=-0.2),
     )
-    st.plotly_chart(fig_radar, use_container_width=True)
+    st.plotly_chart(fig_r, use_container_width=True)
 
 
 # ══════════════════════════════════════════════
-# 10. TABLA RESUMEN DESCARGABLE
+# 11. TABLA DESCARGABLE
 # ══════════════════════════════════════════════
 st.markdown('<div class="section-header">📋 Tabla de Datos</div>', unsafe_allow_html=True)
-
 with st.expander("Ver / Descargar tabla completa", expanded=False):
     col_show = [c for c in ["fecha","grupo","area_admin","nombre_persona","tienda",
                              "botellas_kg","tapas_kg","aceite_kg"] if c in df.columns]
     st.dataframe(
         df[col_show].rename(columns={
-            "fecha": "Fecha", "grupo": "Grupo", "area_admin": "Área",
-            "nombre_persona": "Persona", "tienda": "Tienda",
-            "botellas_kg": "Botellas (kg)", "tapas_kg": "Tapas (kg)", "aceite_kg": "Aceite (kg)"
+            "fecha":"Fecha","grupo":"Grupo","area_admin":"Área",
+            "nombre_persona":"Persona","tienda":"Tienda",
+            "botellas_kg":"Botellas (kg)","tapas_kg":"Tapas (kg)","aceite_kg":"Aceite (kg)",
         }),
-        use_container_width=True,
-        height=300,
+        use_container_width=True, height=300,
     )
-    csv_bytes = df[col_show].to_csv(index=False).encode("utf-8-sig")
     st.download_button(
-        "⬇️ Descargar CSV",
-        data=csv_bytes,
-        file_name="campanas_ambientales.csv",
+        "⬇️ Descargar CSV filtrado",
+        data=df[col_show].to_csv(index=False).encode("utf-8-sig"),
+        file_name="campanas_ambientales_filtrado.csv",
         mime="text/csv",
     )
 
 st.markdown("---")
-st.caption("🌿 Dashboard Campañas Ambientales · Desarrollado con Streamlit & Plotly")
+st.caption("🌿 Dashboard Campañas Ambientales · Streamlit + Plotly")
