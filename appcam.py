@@ -120,7 +120,7 @@ ADMIN_GRUPOS = {
     "Tintorería": "Grupo 6",
 }
 GRUPO_NOMBRES = {
-    "Grupo 1": "Grupo 1 (SGA, SST, Sistemas, Inventarios, Comercial)",
+    "Grupo 1": "Grupo 1 (SGA, SST, Inventarios, Comercial)",
     "Grupo 2": "Grupo 2 (Finanzas)",
     "Grupo 3": "Grupo 3 (RRHH)",
     "Grupo 4": "Grupo 4 (Diseño)",
@@ -257,7 +257,6 @@ def top10_bar(df_in, col_label, col_value, title, color, top_n=10):
         font=dict(family="Inter"),
     )
     return fig
-
 
 # ══════════════════════════════════════════════
 # SIDEBAR
@@ -598,32 +597,38 @@ with c2:
 
 # ══════════════════════════════════════════════
 # 8. GRUPOS ADMINISTRATIVOS INTERNOS
+#     (Corregido: quitar Aceite y usar solo Botellas + Tapas)
 # ══════════════════════════════════════════════
 st.markdown('<div class="section-header">🏆 Competencia Interna — Grupos Administrativos</div>', unsafe_allow_html=True)
 
+# Agrupar solo los administrativos que tienen mapeo de grupo interno
 df_adm_gpo = (
     df_admin[df_admin["grupo_admin"].notna()]
-    .groupby("grupo_admin")[["botellas_kg","tapas_kg","aceite_kg"]].sum().reset_index()
+    .groupby("grupo_admin")[["botellas_kg","tapas_kg"]].sum().reset_index()
 )
-df_adm_gpo["total_kg"]     = df_adm_gpo[["botellas_kg","tapas_kg","aceite_kg"]].sum(axis=1)
+
+# Calcular total considerando solo botellas + tapas (se elimina aceite del ranking)
+df_adm_gpo["total_kg"]     = df_adm_gpo[["botellas_kg","tapas_kg"]].sum(axis=1)
 df_adm_gpo["nombre_grupo"] = df_adm_gpo["grupo_admin"].map(GRUPO_NOMBRES)
 df_adm_gpo = df_adm_gpo.sort_values("total_kg", ascending=False)
 
 if not df_adm_gpo.empty:
+    # Melt solo botellas y tapas
     df_gm = df_adm_gpo.melt(
         id_vars=["nombre_grupo","total_kg"],
-        value_vars=["botellas_kg","tapas_kg","aceite_kg"],
+        value_vars=["botellas_kg","tapas_kg"],
         var_name="Campaña", value_name="kg"
     )
     df_gm["Campaña"] = df_gm["Campaña"].map({
-        "botellas_kg":"Botellas con Amor","tapas_kg":"Tapas para Sanar","aceite_kg":"Aceite Green Fuel"
+        "botellas_kg":"Botellas con Amor","tapas_kg":"Tapas para Sanar"
     })
+    # Paleta y mapeo solo para las dos campañas
     fig_gs = px.bar(
         df_gm.query("kg > 0"), x="kg", y="nombre_grupo", orientation="h",
         color="Campaña", barmode="stack",
-        title="Ranking Grupos Administrativos — Total por Campaña",
+        title="Ranking Grupos Administrativos — Total por Campaña (Botellas + Tapas)",
         color_discrete_map={
-            "Botellas con Amor":COLOR_BOTELLAS,"Tapas para Sanar":COLOR_TAPAS,"Aceite Green Fuel":COLOR_ACEITE
+            "Botellas con Amor":COLOR_BOTELLAS,"Tapas para Sanar":COLOR_TAPAS
         }, text_auto=".1f",
     )
     fig_gs.update_layout(
@@ -667,11 +672,11 @@ if not df_heat.empty:
 # ══════════════════════════════════════════════
 if len(df_adm_gpo) >= 3:
     st.markdown('<div class="section-header">🕸️ Radar — Grupos Administrativos</div>', unsafe_allow_html=True)
-    cats = ["Botellas con Amor","Tapas para Sanar","Aceite Green Fuel"]
+    cats = ["Botellas con Amor","Tapas para Sanar"]
     cr   = ["#059669","#2563eb","#d97706","#dc2626","#7c3aed","#0891b2"]
     fig_r = go.Figure()
     for i, row in df_adm_gpo.iterrows():
-        vals = [row["botellas_kg"], row["tapas_kg"], row["aceite_kg"]]
+        vals = [row["botellas_kg"], row["tapas_kg"]]
         fig_r.add_trace(go.Scatterpolar(
             r=vals+vals[:1], theta=cats+cats[:1],
             fill="toself", name=row["nombre_grupo"],
@@ -680,7 +685,7 @@ if len(df_adm_gpo) >= 3:
     fig_r.update_layout(
         polar=dict(radialaxis=dict(visible=True, tickfont=dict(size=9))),
         showlegend=True,
-        title=dict(text="Radar de Desempeño — Grupos Administrativos",
+        title=dict(text="Radar de Desempeño — Grupos Administrativos (Botellas + Tapas)",
                    font=dict(family="Montserrat", size=14, color="#1a6b3c")),
         paper_bgcolor="white", height=450,
         legend=dict(orientation="h", yanchor="bottom", y=-0.2),
