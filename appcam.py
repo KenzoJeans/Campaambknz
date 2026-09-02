@@ -21,73 +21,103 @@ st.set_page_config(
 )
 
 # ──────────────────────────────────────────────
-# ESTILOS CSS
+# PALETA DE COLORES — TEMA OSCURO
 # ──────────────────────────────────────────────
-st.markdown("""
+DARK_BG      = "#0e1117"   # fondo general de la app
+DARK_PANEL   = "#161a23"   # fondo de tarjetas / gráficas
+DARK_BORDER  = "#26492f"   # bordes verdes sutiles
+DARK_TEXT    = "#e5e7eb"   # texto principal
+DARK_MUTED   = "#9aa4b2"   # texto secundario
+ACCENT_GREEN = "#34d399"   # verde de acento (títulos, resaltados)
+GRID_COLOR   = "#2a2f3a"   # líneas de cuadrícula en gráficas
+
+# ──────────────────────────────────────────────
+# ESTILOS CSS (TEMA OSCURO)
+# ──────────────────────────────────────────────
+st.markdown(f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&family=Inter:wght@300;400;500&display=swap');
 
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
 
-    .main-title {
+    /* Fondo general de la app y sidebar */
+    .stApp {{
+        background-color: {DARK_BG};
+        color: {DARK_TEXT};
+    }}
+    [data-testid="stSidebar"] {{
+        background-color: #10131a;
+        border-right: 1px solid {DARK_BORDER};
+    }}
+    [data-testid="stSidebar"] * {{
+        color: {DARK_TEXT};
+    }}
+
+    .main-title {{
         font-family: 'Montserrat', sans-serif;
         font-size: 2.4rem;
         font-weight: 800;
-        background: linear-gradient(135deg, #1a6b3c, #2ecc71, #27ae60);
+        background: linear-gradient(135deg, #34d399, #22c55e, #16a34a);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         text-align: center;
         margin-bottom: 0.2rem;
-    }
-    .subtitle {
+    }}
+    .subtitle {{
         text-align: center;
-        color: #6b7280;
+        color: {DARK_MUTED};
         font-size: 0.95rem;
         margin-bottom: 1.5rem;
         font-family: 'Montserrat', sans-serif;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #f0fdf4, #dcfce7);
-        border: 1px solid #bbf7d0;
-        border-left: 4px solid #16a34a;
+    }}
+    .metric-card {{
+        background: linear-gradient(135deg, #10241a, #0e3322);
+        border: 1px solid {DARK_BORDER};
+        border-left: 4px solid {ACCENT_GREEN};
         border-radius: 12px;
         padding: 1rem 1.2rem;
         text-align: center;
-    }
-    .metric-value {
+    }}
+    .metric-value {{
         font-size: 2rem;
         font-weight: 800;
-        color: #15803d;
+        color: {ACCENT_GREEN};
         font-family: 'Montserrat', sans-serif;
-    }
-    .metric-label {
+    }}
+    .metric-label {{
         font-size: 0.8rem;
-        color: #4b5563;
+        color: {DARK_MUTED};
         font-weight: 500;
         text-transform: uppercase;
         letter-spacing: 0.05em;
-    }
-    .section-header {
+    }}
+    .section-header {{
         font-family: 'Montserrat', sans-serif;
         font-size: 1.2rem;
         font-weight: 700;
-        color: #1a6b3c;
-        border-bottom: 2px solid #bbf7d0;
+        color: {ACCENT_GREEN};
+        border-bottom: 2px solid {DARK_BORDER};
         padding-bottom: 0.4rem;
         margin: 1.5rem 0 1rem 0;
-    }
-    .stPlotlyChart { border-radius: 12px; overflow: hidden; }
-    .filter-badge {
-        background: #dcfce7;
-        color: #15803d;
-        border: 1px solid #86efac;
+    }}
+    .stPlotlyChart {{ border-radius: 12px; overflow: hidden; }}
+    .filter-badge {{
+        background: #0e3322;
+        color: {ACCENT_GREEN};
+        border: 1px solid {DARK_BORDER};
         border-radius: 20px;
         padding: 0.25rem 0.9rem;
         font-size: 0.78rem;
         font-weight: 600;
         display: inline-block;
         margin-bottom: 0.8rem;
-    }
+    }}
+    /* Tarjetas / expanders / dataframe */
+    [data-testid="stExpander"] {{
+        background-color: {DARK_PANEL};
+        border: 1px solid {DARK_BORDER};
+        border-radius: 10px;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -99,11 +129,11 @@ URL_OFICIAL = (
     "157VmpJo9qvuKDmx12yya2E1caGa28HB4Kxd3-EeY_G8/export?format=csv"
 )
 
-PALETTE_MULTI  = ["#059669","#2563eb","#d97706","#dc2626","#7c3aed",
-                  "#0891b2","#be185d","#65a30d","#0f766e","#c2410c"]
-COLOR_BOTELLAS = "#059669"
-COLOR_TAPAS    = "#2563eb"
-COLOR_ACEITE   = "#d97706"
+PALETTE_MULTI  = ["#34d399","#60a5fa","#fbbf24","#f87171","#a78bfa",
+                  "#22d3ee","#f472b6","#a3e635","#2dd4bf","#fb923c"]
+COLOR_BOTELLAS = "#34d399"
+COLOR_TAPAS    = "#60a5fa"
+COLOR_ACEITE   = "#fbbf24"
 
 ADMIN_GRUPOS = {
     "SGA":        "Grupo 1",
@@ -153,6 +183,11 @@ def gs_url_to_csv(url: str) -> str:
     return url + "/export?format=csv"
 
 
+def _parse_dates(series: pd.Series, dayfirst: bool) -> pd.Series:
+    """Intenta parsear fechas con una orientación día/mes dada."""
+    return pd.to_datetime(series, dayfirst=dayfirst, errors="coerce")
+
+
 def _normalize(df: pd.DataFrame) -> pd.DataFrame:
     rename_map = {}
     for col in df.columns:
@@ -191,10 +226,30 @@ def _normalize(df: pd.DataFrame) -> pd.DataFrame:
     df["grupo"]       = df["grupo"].str.strip().str.title()
     df["grupo_admin"] = df["area_admin"].map(ADMIN_GRUPOS)
 
-    # Parsear fecha
+    # ── Parsear fecha (CORREGIDO) ──────────────────────────────────
+    # "timestamp" viene de la "Marca temporal" de Google Forms, que por
+    # defecto usa formato estadounidense M/D/AAAA — NO day-first.
+    # "fecha" (si existe como columna manual) suele venir en formato
+    # colombiano D/M/AAAA — sí day-first.
+    # Usar dayfirst=True para AMBAS columnas (como en el script original)
+    # rompía silenciosamente el parseo de la marca temporal de Google
+    # Forms para cualquier día <= 12, generando fechas incorrectas y
+    # haciendo que el filtro de fechas pareciera "no funcionar".
     fecha_col = "fecha" if "fecha" in df.columns else ("timestamp" if "timestamp" in df.columns else None)
     if fecha_col:
-        df["fecha_dt"] = pd.to_datetime(df[fecha_col], dayfirst=True, errors="coerce")
+        dayfirst = (fecha_col == "fecha")  # False para "timestamp"
+        parsed = _parse_dates(df[fecha_col], dayfirst=dayfirst)
+
+        # Salvaguarda: si con la orientación esperada fallan demasiadas
+        # filas, se prueba la orientación contraria y se usa la que
+        # logre parsear más fechas válidas.
+        tasa_fallo = parsed.isna().mean() if len(parsed) else 0
+        if tasa_fallo > 0.3:
+            alterna = _parse_dates(df[fecha_col], dayfirst=not dayfirst)
+            if alterna.isna().mean() < tasa_fallo:
+                parsed = alterna
+
+        df["fecha_dt"] = parsed
     else:
         df["fecha_dt"] = pd.NaT
 
@@ -216,6 +271,24 @@ def load_from_bytes(file_bytes: bytes, file_name: str) -> pd.DataFrame:
     return _normalize(df)
 
 
+def apply_dark_theme(fig, height=None, legend_bottom=True):
+    """Aplica el tema oscuro consistente a cualquier figura de Plotly."""
+    layout_kwargs = dict(
+        template="plotly_dark",
+        paper_bgcolor=DARK_PANEL,
+        plot_bgcolor=DARK_PANEL,
+        font=dict(family="Inter", color=DARK_TEXT),
+        xaxis=dict(gridcolor=GRID_COLOR, zerolinecolor=GRID_COLOR, color=DARK_TEXT),
+        yaxis=dict(gridcolor=GRID_COLOR, zerolinecolor=GRID_COLOR, color=DARK_TEXT),
+    )
+    if height:
+        layout_kwargs["height"] = height
+    fig.update_layout(**layout_kwargs)
+    if legend_bottom:
+        fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=-0.25, font=dict(color=DARK_TEXT)))
+    return fig
+
+
 def top10_bar(df_in, col_label, col_value, title, color, top_n=10):
     df_plot = (
         df_in.groupby(col_label, as_index=False)[col_value]
@@ -229,34 +302,31 @@ def top10_bar(df_in, col_label, col_value, title, color, top_n=10):
         fig = go.Figure()
         fig.update_layout(
             title=title + " — Sin datos",
-            paper_bgcolor="white",
             annotations=[dict(
                 text="Sin registros para los filtros actuales",
                 xref="paper", yref="paper", x=0.5, y=0.5,
-                showarrow=False, font=dict(size=13, color="#9ca3af"),
+                showarrow=False, font=dict(size=13, color=DARK_MUTED),
             )],
         )
-        return fig
+        return apply_dark_theme(fig)
     fig = go.Figure(go.Bar(
         x=df_plot[col_value], y=df_plot[col_label], orientation="h",
         marker=dict(color=df_plot[col_value],
-                    colorscale=[[0,"#d1fae5"],[1,color]],
-                    showscale=False, line=dict(color="white", width=0.5)),
+                    colorscale=[[0, DARK_BORDER],[1, color]],
+                    showscale=False, line=dict(color=DARK_PANEL, width=0.5)),
         text=[f"{v:.1f} kg" for v in df_plot[col_value]],
         textposition="outside",
+        textfont=dict(color=DARK_TEXT),
         hovertemplate="%{y}: %{x:.2f} kg<extra></extra>",
     ))
     fig.update_layout(
-        title=dict(text=title, font=dict(family="Montserrat", size=14, color="#1a6b3c")),
+        title=dict(text=title, font=dict(family="Montserrat", size=14, color=ACCENT_GREEN)),
         xaxis_title="kg recolectados", yaxis_title="",
-        plot_bgcolor="white", paper_bgcolor="white",
         margin=dict(l=10, r=70, t=50, b=30),
         height=max(300, top_n * 38),
-        xaxis=dict(gridcolor="#f0f0f0", showgrid=True),
         yaxis=dict(tickfont=dict(size=11)),
-        font=dict(family="Inter"),
     )
-    return fig
+    return apply_dark_theme(fig, height=max(300, top_n * 38))
 
 # ══════════════════════════════════════════════
 # SIDEBAR
@@ -362,16 +432,24 @@ except Exception as e:
 
 # ── Aplicar filtro de fecha ───────────────────────────────────────────
 if usar_filtro and fecha_inicio and fecha_fin and fecha_inicio <= fecha_fin:
+    fechas_validas = df_raw["fecha_dt"].notna()
     mask = (
+        fechas_validas &
         (df_raw["fecha_dt"].dt.date >= fecha_inicio) &
         (df_raw["fecha_dt"].dt.date <= fecha_fin)
     )
     df = df_raw[mask].copy()
+    sin_fecha = (~fechas_validas).sum()
     badge_txt = (
         f"🗓️ Filtro activo: {fecha_inicio.strftime('%d/%m/%Y')} → "
         f"{fecha_fin.strftime('%d/%m/%Y')} &nbsp;·&nbsp; "
         f"<b>{len(df)}</b> de <b>{len(df_raw)}</b> registros"
     )
+    if sin_fecha:
+        badge_txt += f" &nbsp;·&nbsp; ⚠️ {sin_fecha} sin fecha válida (excluidos)"
+elif usar_filtro and fecha_inicio and fecha_fin and fecha_inicio > fecha_fin:
+    df = df_raw.copy()
+    badge_txt = "⚠️ Rango de fechas inválido — mostrando todos los registros sin filtrar"
 else:
     df = df_raw.copy()
     badge_txt = f"📋 Todos los registros: <b>{len(df)}</b>"
@@ -435,11 +513,8 @@ with c1:
         textposition="outside", textinfo="percent+label",
         hovertemplate="<b>%{label}</b><br>Participantes: %{value}<br>%{percent}<extra></extra>",
     )
-    fig_pie.update_layout(
-        title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.25),
-        margin=dict(t=50, b=20), paper_bgcolor="white", height=380,
-    )
+    fig_pie.update_layout(title=dict(font=dict(family="Montserrat", size=14, color=ACCENT_GREEN)))
+    apply_dark_theme(fig_pie, height=380)
     st.plotly_chart(fig_pie, use_container_width=True)
 
 with c2:
@@ -456,10 +531,11 @@ with c2:
         }, text_auto=".1f",
     )
     fig_bg.update_layout(
-        title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-        plot_bgcolor="white", paper_bgcolor="white", xaxis_title="", yaxis_title="kg",
-        legend=dict(orientation="h", yanchor="bottom", y=-0.35), height=380,
+        title=dict(font=dict(family="Montserrat", size=14, color=ACCENT_GREEN)),
+        xaxis_title="", yaxis_title="kg",
     )
+    apply_dark_theme(fig_bg, height=380)
+    fig_bg.update_layout(legend=dict(orientation="h", yanchor="bottom", y=-0.35, font=dict(color=DARK_TEXT)))
     st.plotly_chart(fig_bg, use_container_width=True)
 
 
@@ -484,11 +560,8 @@ with c1:
         textposition="outside", textinfo="percent+label",
         hovertemplate="<b>%{label}</b><br>%{value:.1f} kg (%{percent})<extra></extra>",
     )
-    fig_camp.update_layout(
-        title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.25),
-        paper_bgcolor="white", height=360,
-    )
+    fig_camp.update_layout(title=dict(font=dict(family="Montserrat", size=14, color=ACCENT_GREEN)))
+    apply_dark_theme(fig_camp, height=360)
     st.plotly_chart(fig_camp, use_container_width=True)
 
 with c2:
@@ -503,12 +576,12 @@ with c2:
             "Botellas con Amor":COLOR_BOTELLAS,"Tapas para Sanar":COLOR_TAPAS,"Aceite Green Fuel":COLOR_ACEITE
         }, text="Participantes",
     )
-    fig_pcamp.update_traces(textposition="outside")
+    fig_pcamp.update_traces(textposition="outside", textfont=dict(color=DARK_TEXT))
     fig_pcamp.update_layout(
-        title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-        showlegend=False, plot_bgcolor="white", paper_bgcolor="white",
-        height=360, yaxis_title="Personas", xaxis_title="",
+        title=dict(font=dict(family="Montserrat", size=14, color=ACCENT_GREEN)),
+        showlegend=False, yaxis_title="Personas", xaxis_title="",
     )
+    apply_dark_theme(fig_pcamp, height=360)
     st.plotly_chart(fig_pcamp, use_container_width=True)
 
 
@@ -533,11 +606,11 @@ if df["fecha_dt"].dropna().dt.date.nunique() > 1:
         },
     )
     fig_time.update_layout(
-        title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-        plot_bgcolor="white", paper_bgcolor="white",
-        xaxis_title="Fecha", yaxis_title="kg", height=320,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.3),
+        title=dict(font=dict(family="Montserrat", size=14, color=ACCENT_GREEN)),
+        xaxis_title="Fecha", yaxis_title="kg",
     )
+    apply_dark_theme(fig_time, height=320)
+    fig_time.update_layout(legend=dict(orientation="h", yanchor="bottom", y=-0.3, font=dict(color=DARK_TEXT)))
     st.plotly_chart(fig_time, use_container_width=True)
 
 
@@ -632,13 +705,12 @@ if not df_adm_gpo.empty:
         }, text_auto=".1f",
     )
     fig_gs.update_layout(
-        title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-        plot_bgcolor="white", paper_bgcolor="white",
+        title=dict(font=dict(family="Montserrat", size=14, color=ACCENT_GREEN)),
         xaxis_title="kg recolectados", yaxis_title="",
-        legend=dict(orientation="h", yanchor="bottom", y=-0.2),
-        height=max(350, len(df_adm_gpo)*55+80),
         margin=dict(l=10, r=60, t=50, b=60),
     )
+    apply_dark_theme(fig_gs, height=max(350, len(df_adm_gpo)*55+80))
+    fig_gs.update_layout(legend=dict(orientation="h", yanchor="bottom", y=-0.2, font=dict(color=DARK_TEXT)))
     st.plotly_chart(fig_gs, use_container_width=True)
 else:
     st.info("No hay datos de grupos administrativos en el período seleccionado.")
@@ -657,13 +729,14 @@ if not df_heat.empty:
     fig_heat = px.imshow(
         df_heat, text_auto=".1f",
         title="Mapa de Calor — Kg por Área y Campaña",
-        color_continuous_scale="Greens", aspect="auto",
+        color_continuous_scale=[[0, DARK_PANEL], [1, ACCENT_GREEN]],
+        aspect="auto",
     )
     fig_heat.update_layout(
-        title=dict(font=dict(family="Montserrat", size=14, color="#1a6b3c")),
-        paper_bgcolor="white", height=max(300, len(df_heat)*40+100),
+        title=dict(font=dict(family="Montserrat", size=14, color=ACCENT_GREEN)),
         coloraxis_colorbar_title="kg",
     )
+    apply_dark_theme(fig_heat, height=max(300, len(df_heat)*40+100), legend_bottom=False)
     st.plotly_chart(fig_heat, use_container_width=True)
 
 # ══════════════════════════════════════════════
