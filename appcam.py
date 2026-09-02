@@ -163,11 +163,32 @@ GRUPO_NOMBRES = {
 # FUNCIONES AUXILIARES
 # ──────────────────────────────────────────────
 def clean_weight(series: pd.Series) -> pd.Series:
-    return (
-        series.replace(["No Participa","No participa","no participa",""], 0)
-              .fillna(0)
-              .astype(float)
+    """Limpia una columna de peso (kg) tolerando errores de digitación
+    comunes en formularios: comas decimales, puntos de más ('2.4.'),
+    espacios, unidades pegadas ('2.4kg'), celdas vacías, etc.
+    Cualquier valor que siga sin poder interpretarse como número se
+    convierte a 0 en vez de romper la carga de todo el dashboard.
+    """
+    s = series.fillna("0").astype(str).str.strip()
+    s = s.replace(
+        ["No Participa", "No participa", "no participa", "", "nan", "None", "NaN"],
+        "0",
     )
+    s = s.str.replace(" ", "", regex=False)
+    s = s.str.replace("kg", "", case=False, regex=False)
+    # Formato es-CO: coma como separador decimal
+    s = s.str.replace(",", ".", regex=False)
+    # Quita puntos sobrantes al inicio/fin (typos como "2.4." o ".2.4")
+    s = s.str.strip(".")
+
+    def _un_solo_punto(v: str) -> str:
+        if v.count(".") > 1:
+            partes = v.split(".")
+            v = "".join(partes[:-1]) + "." + partes[-1]
+        return v
+
+    s = s.apply(_un_solo_punto)
+    return pd.to_numeric(s, errors="coerce").fillna(0)
 
 
 def gs_url_to_csv(url: str) -> str:
