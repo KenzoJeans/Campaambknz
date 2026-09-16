@@ -901,30 +901,30 @@ if not df_heat.empty:
     apply_dark_theme(fig_heat, height=max(300, len(df_heat)*40+100), legend_bottom=False)
     st.plotly_chart(fig_heat, use_container_width=True)
 
-# ══════════════════════════════════════════════
-# 11. TABLA DESCARGABLE
-# ══════════════════════════════════════════════
-st.markdown('<div class="section-header">📋 Tabla de Datos</div>', unsafe_allow_html=True)
-with st.expander("Ver / Descargar tabla completa", expanded=False):
-    col_show = [c for c in ["fecha","grupo","area_admin","nombre_persona","tienda",
-                             "botellas_kg","tapas_kg","aceite_kg"] if c in df.columns]
-    st.dataframe(
-        df[col_show].rename(columns={
-            "fecha":"Fecha","grupo":"Grupo","area_admin":"Área",
-            "nombre_persona":"Persona","tienda":"Tienda",
-            "botellas_kg":"Botellas (kg)","tapas_kg":"Tapas (kg)","aceite_kg":"Aceite (kg)",
-        }),
-        use_container_width=True, height=300,
-    )
-    st.download_button(
-        "⬇️ Descargar CSV filtrado",
-        data=df[col_show].to_csv(index=False).encode("utf-8-sig"),
-        file_name="campanas_ambientales_filtrado.csv",
-        mime="text/csv",
-    )
 import textwrap
 
-# 2. Renderizar Infografía Estructurada en Bloques (HTML + CSS)
+# ──────────────────────────────────────────────
+# 1. CÁLCULO SEGURO DE VARIABLES PARA EL FLYER
+# ──────────────────────────────────────────────
+top_op_botellas = top_n_df(df_op, "nombre_persona", "botellas_kg", 1)
+top_op_tapas = top_n_df(df_op, "nombre_persona", "tapas_kg", 1)
+top_tienda_botellas = top_n_df(df_tienda, "tienda", "botellas_kg", 1)
+
+ganador_botellas_op = top_op_botellas.iloc[0]['nombre_persona'] if not top_op_botellas.empty else "N/A"
+ganador_botellas_op_kg = top_op_botellas.iloc[0]['botellas_kg'] if not top_op_botellas.empty else 0.0
+
+ganador_tapas_op = top_op_tapas.iloc[0]['nombre_persona'] if not top_op_tapas.empty else "N/A"
+ganador_tapas_op_kg = top_op_tapas.iloc[0]['tapas_kg'] if not top_op_tapas.empty else 0.0
+
+ganador_tienda_botellas = top_tienda_botellas.iloc[0]['tienda'] if not top_tienda_botellas.empty else "N/A"
+
+# Definición explícita antes del f-string
+agua_protegida_litros = int(total_aceite * 1000)
+
+
+# ──────────────────────────────────────────────
+# 2. RENDERIZADO DEL HTML
+# ──────────────────────────────────────────────
 html_flyer = textwrap.dedent(f"""
 <style>
     .flyer-container {{
@@ -1106,9 +1106,7 @@ html_flyer = textwrap.dedent(f"""
 </div>
 """).strip()
 
-# Renderizar en Streamlit (Alternativamente puedes usar st.html(html_flyer))
 st.markdown(html_flyer, unsafe_allow_html=True)
-st.markdown("<br>", unsafe_allow_html=True)
 
 st.markdown("---")
 st.caption("🌿 Dashboard Campañas Ambientales · Streamlit + Plotly")
