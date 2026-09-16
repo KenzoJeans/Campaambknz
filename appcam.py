@@ -8,7 +8,14 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
+import io
 from datetime import datetime, date
+
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.units import cm
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
 # ──────────────────────────────────────────────
 # CONFIGURACIÓN PÁGINA
@@ -30,6 +37,11 @@ DARK_TEXT    = "#e5e7eb"   # texto principal
 DARK_MUTED   = "#9aa4b2"   # texto secundario
 ACCENT_GREEN = "#34d399"   # verde de acento (títulos, resaltados)
 GRID_COLOR   = "#2a2f3a"   # líneas de cuadrícula en gráficas
+
+# Verde sólido para el PDF (los tonos "mint" no imprimen bien sobre blanco)
+PDF_GREEN       = colors.HexColor("#16a34a")
+PDF_GREEN_LIGHT = colors.HexColor("#eef7f0")
+PDF_BORDER      = colors.HexColor("#cbd5c9")
 
 # ──────────────────────────────────────────────
 # ESTILOS CSS (TEMA OSCURO)
@@ -310,15 +322,19 @@ def apply_dark_theme(fig, height=None, legend_bottom=True):
     return fig
 
 
-def top10_bar(df_in, col_label, col_value, title, color, top_n=10):
-    df_plot = (
+def top_n_df(df_in: pd.DataFrame, col_label: str, col_value: str, top_n: int = 10) -> pd.DataFrame:
+    """Devuelve el top-N agregado (descendente) para una etiqueta y una métrica."""
+    return (
         df_in.groupby(col_label, as_index=False)[col_value]
         .sum()
         .query(f"{col_value} > 0")
         .sort_values(col_value, ascending=False)
         .head(top_n)
-        .sort_values(col_value, ascending=True)
     )
+
+
+def top10_bar(df_in, col_label, col_value, title, color, top_n=10):
+    df_plot = top_n_df(df_in, col_label, col_value, top_n).sort_values(col_value, ascending=True)
     if df_plot.empty:
         fig = go.Figure()
         fig.update_layout(
@@ -348,6 +364,109 @@ def top10_bar(df_in, col_label, col_value, title, color, top_n=10):
         yaxis=dict(tickfont=dict(size=11)),
     )
     return apply_dark_theme(fig, height=max(300, top_n * 38))
+
+
+# ──────────────────────────────────────────────
+# EXPORTACIÓN A PDF
+# ──────────────────────────────────────────────
+def _tabla_pdf(data, col_widths=None):
+    """Construye una tabla de reportlab con el estilo verde del dashboard."""
+    tabla = Table(data, colWidths=col_widths, repeatRows=1)
+    tabla.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), PDF_GREEN),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, PDF_GREEN_LIGHT]),
+        ("GRID", (0, 0), (-1, -1), 0.4, PDF_BORDER),
+        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    return tabla
+
+
+def generar_pdf_reporte(df, df_op, df_tienda, df_admin, df_adm_gpo, top_n, filtro_texto):
+    """Genera el PDF de métricas de las campañas ambientales y devuelve los bytes."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter,
+        topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+        leftMargin=1.5 * cm, rightMargin=1.5 * cm,
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle(
+        "TituloVerde", parent=styles["Title"], textColor=PDF_GREEN,
+    )
+    heading_style = ParagraphStyle(
+        "SubtituloVerde", parent=styles["Heading2"], textColor=PDF_GREEN,
+        spaceBefore=14, spaceAfter=6,
+    )
+    normal_style = styles["Normal"]
+
+    elementos = []
+    elementos.append(Paragraph("Reporte Campañas Ambientales", titulo_style))
+    elementos.append(Paragraph("Botellas con Amor · Tapas para Sanar · Aceite Green Fuel", normal_style))
+    elementos.append(Spacer(1, 0.3 * cm))
+    elementos.append(Paragraph(f"Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}", normal_style))
+    elementos.append(Paragraph(filtro_texto, normal_style))
+    elementos.append(Spacer(1, 0.4 * cm))
+
+    total_botellas = df["botellas_kg"].sum()
+    total_tapas = df["tapas_kg"].sum()
+    total_aceite = df["aceite_kg"].sum()
+    total_kg = total_botellas + total_tapas + total_aceite
+
+    elementos.append(Paragraph("Resumen General", heading_style))
+    kpi_data = [
+        ["Métrica", "Valor"],
+        ["Participantes", f"{len(df)}"],
+        ["Botellas con Amor (kg)", f"{total_botellas:.1f}"],
+        ["Tapas para Sanar (kg)", f"{total_tapas:.1f}"],
+        ["Aceite Green Fuel (kg)", f"{total_aceite:.1f}"],
+        ["Total recolectado (kg)", f"{total_kg:.1f}"],
+    ]
+    elementos.append(_tabla_pdf(kpi_data, col_widths=[9 * cm, 5 * cm]))
+
+    def _agregar_ranking(titulo, df_in, col_label, col_value):
+        elementos.append(Paragraph(titulo, heading_style))
+        top_df = top_n_df(df_in, col_label, col_value, top_n)
+        if top_df.empty:
+            elementos.append(Paragraph("Sin registros para el período seleccionado.", normal_style))
+            return
+        data = [["#", "Nombre", "kg"]]
+        for i, row in enumerate(top_df.itertuples(index=False), start=1):
+            nombre = getattr(row, col_label)
+            valor = getattr(row, col_value)
+            data.append([str(i), str(nombre), f"{valor:.1f}"])
+        elementos.append(_tabla_pdf(data, col_widths=[1.5 * cm, 9 * cm, 3.5 * cm]))
+
+    _agregar_ranking(f"Top {top_n} Operadores — Botellas con Amor", df_op, "nombre_persona", "botellas_kg")
+    _agregar_ranking(f"Top {top_n} Operadores — Tapas para Sanar", df_op, "nombre_persona", "tapas_kg")
+    _agregar_ranking(f"Top {top_n} Tiendas — Botellas con Amor", df_tienda, "tienda", "botellas_kg")
+    _agregar_ranking(f"Top {top_n} Tiendas — Tapas para Sanar", df_tienda, "tienda", "tapas_kg")
+
+    df_admin_et = df_admin.copy()
+    df_admin_et["etiqueta"] = df_admin_et.apply(
+        lambda r: r["nombre_persona"] if r["nombre_persona"] != "N/A" else r["area_admin"], axis=1)
+    _agregar_ranking(f"Top {top_n} Administrativos — Botellas con Amor", df_admin_et, "etiqueta", "botellas_kg")
+    _agregar_ranking(f"Top {top_n} Administrativos — Tapas para Sanar", df_admin_et, "etiqueta", "tapas_kg")
+
+    if not df_adm_gpo.empty:
+        elementos.append(Paragraph("Competencia Interna — Grupos Administrativos", heading_style))
+        data = [["Grupo", "Botellas (kg)", "Tapas (kg)", "Total (kg)"]]
+        for row in df_adm_gpo.sort_values("total_kg", ascending=False).itertuples(index=False):
+            data.append([
+                row.nombre_grupo, f"{row.botellas_kg:.1f}", f"{row.tapas_kg:.1f}", f"{row.total_kg:.1f}"
+            ])
+        elementos.append(_tabla_pdf(data, col_widths=[7 * cm, 2.5 * cm, 2.5 * cm, 2 * cm]))
+
+    doc.build(elementos)
+    buffer.seek(0)
+    return buffer.getvalue()
+
 
 # ══════════════════════════════════════════════
 # SIDEBAR
@@ -468,12 +587,18 @@ if usar_filtro and fecha_inicio and fecha_fin and fecha_inicio <= fecha_fin:
     )
     if sin_fecha:
         badge_txt += f" &nbsp;·&nbsp; ⚠️ {sin_fecha} sin fecha válida (excluidos)"
+    filtro_texto_pdf = (
+        f"Filtro de fecha: {fecha_inicio.strftime('%d/%m/%Y')} – {fecha_fin.strftime('%d/%m/%Y')} "
+        f"· {len(df)} de {len(df_raw)} registros"
+    )
 elif usar_filtro and fecha_inicio and fecha_fin and fecha_inicio > fecha_fin:
     df = df_raw.copy()
     badge_txt = "⚠️ Rango de fechas inválido — mostrando todos los registros sin filtrar"
+    filtro_texto_pdf = "Rango de fechas inválido — se muestran todos los registros sin filtrar"
 else:
     df = df_raw.copy()
     badge_txt = f"📋 Todos los registros: <b>{len(df)}</b>"
+    filtro_texto_pdf = f"Todos los registros: {len(df)}"
 
 st.markdown(f'<div class="filter-badge">{badge_txt}</div>', unsafe_allow_html=True)
 
@@ -735,6 +860,22 @@ if not df_adm_gpo.empty:
     st.plotly_chart(fig_gs, use_container_width=True)
 else:
     st.info("No hay datos de grupos administrativos en el período seleccionado.")
+
+
+# ══════════════════════════════════════════════
+# 8.1 EXPORTAR REPORTE PDF
+# ══════════════════════════════════════════════
+st.markdown('<div class="section-header">📄 Exportar Reporte PDF</div>', unsafe_allow_html=True)
+st.caption("Genera un PDF con el resumen de KPIs y los rankings actuales (respeta el filtro de fecha activo).")
+
+pdf_bytes = generar_pdf_reporte(df, df_op, df_tienda, df_admin, df_adm_gpo, top_n, filtro_texto_pdf)
+st.download_button(
+    label="⬇️ Descargar reporte PDF",
+    data=pdf_bytes,
+    file_name=f"reporte_campanas_ambientales_{date.today().isoformat()}.pdf",
+    mime="application/pdf",
+    type="primary",
+)
 
 
 # ══════════════════════════════════════════════
