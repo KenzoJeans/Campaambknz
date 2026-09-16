@@ -922,6 +922,234 @@ with st.expander("Ver / Descargar tabla completa", expanded=False):
         file_name="campanas_ambientales_filtrado.csv",
         mime="text/csv",
     )
+    # ──────────────────────────────────────────────
+# SECCIÓN: GENERADOR DE FLYER / INFOGRAFÍA
+# ──────────────────────────────────────────────
+st.markdown('<div class="section-header">🖼️ Infografía Impresa / Flyer Generado</div>', unsafe_allow_html=True)
+st.caption("Esta vista traduce automáticamente los datos actuales a un formato de infografía por bloques listo para proyectar, imprimir o guardar.")
+
+# 1. Obtener ganadores y datos clave automáticamente del DataFrame
+top_op_botellas = top_n_df(df_op, "nombre_persona", "botellas_kg", 1)
+top_op_tapas = top_n_df(df_op, "nombre_persona", "tapas_kg", 1)
+top_tienda_botellas = top_n_df(df_tienda, "tienda", "botellas_kg", 1)
+top_tienda_tapas = top_n_df(df_tienda, "tienda", "tapas_kg", 1)
+
+ganador_botellas_op = top_op_botellas.iloc[0]['nombre_persona'] if not top_op_botellas.empty else "N/A"
+ganador_botellas_op_kg = top_op_botellas.iloc[0]['botellas_kg'] if not top_op_botellas.empty else 0
+
+ganador_tapas_op = top_op_tapas.iloc[0]['nombre_persona'] if not top_op_tapas.empty else "N/A"
+ganador_tapas_op_kg = top_op_tapas.iloc[0]['tapas_kg'] if not top_op_tapas.empty else 0
+
+ganador_tienda_botellas = top_tienda_botellas.iloc[0]['tienda'] if not top_tienda_botellas.empty else "N/A"
+ganador_tienda_tapas = top_tienda_tapas.iloc[0]['tienda'] if not top_tienda_tapas.empty else "N/A"
+
+# Grupo administrativo líder
+grupo_lider = df_adm_gpo.iloc[0]['nombre_grupo'] if not df_adm_gpo.empty else "N/A"
+grupo_lider_kg = df_adm_gpo.iloc[0]['total_kg'] if not df_adm_gpo.empty else 0
+
+# Conversión de equivalencia (75.3 kg de aceite ≈ 80L ≈ 80,000L de agua protegida)
+agua_protegida_litros = int(total_aceite * 1000)
+
+# 2. Renderizar Infografía Estructurada en Bloques (HTML + CSS)
+html_flyer = f"""
+<style>
+    /* Estilos del Flyer Estilo Bloques / Infografía */
+    .flyer-container {{
+        background-color: #f8fafc;
+        border-radius: 16px;
+        padding: 25px;
+        color: #1e293b;
+        font-family: 'Montserrat', sans-serif;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+        max-width: 850px;
+        margin: 0 auto;
+        border: 4px solid #16a34a;
+    }}
+    .flyer-header {{
+        background: linear-gradient(135deg, #059669, #16a34a);
+        color: white;
+        text-align: center;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+    }}
+    .flyer-header h1 {{
+        margin: 0;
+        font-size: 2.2rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }}
+    .flyer-header p {{
+        margin: 5px 0 0 0;
+        font-size: 1.1rem;
+        opacity: 0.9;
+    }}
+    
+    /* Bloque de Impacto Principal */
+    .flyer-impact-banner {{
+        background-color: #fef3c7;
+        border-left: 6px solid #d97706;
+        padding: 15px 20px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-around;
+        text-align: center;
+    }}
+    .impact-stat {{
+        font-size: 2rem;
+        font-weight: 800;
+        color: #b45309;
+    }}
+    .impact-label {{
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #78350f;
+        text-transform: uppercase;
+    }}
+
+    /* Grid de Bloques de Colores (Como la imagen de referencia) */
+    .flyer-grid {{
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px;
+        margin-bottom: 20px;
+    }}
+    .flyer-card {{
+        border-radius: 12px;
+        padding: 18px 12px;
+        text-align: center;
+        color: white;
+    }}
+    .card-green {{ background-color: #10b981; }}
+    .card-blue {{ background-color: #3b82f6; }}
+    .card-amber {{ background-color: #f59e0b; }}
+    
+    .card-icon {{ font-size: 2.2rem; margin-bottom: 8px; }}
+    .card-title {{ font-size: 0.9rem; font-weight: 700; text-transform: uppercase; }}
+    .card-value {{ font-size: 1.8rem; font-weight: 800; margin: 5px 0; }}
+    .card-desc {{ font-size: 0.78rem; opacity: 0.95; line-height: 1.2; }}
+
+    /* Bloque de Héroes / Ganadores */
+    .flyer-winners-section {{
+        background-color: #e0f2fe;
+        border: 2px dashed #0284c7;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }}
+    .winners-title {{
+        text-align: center;
+        color: #0369a1;
+        font-size: 1.3rem;
+        font-weight: 800;
+        margin-bottom: 15px;
+        text-transform: uppercase;
+    }}
+    .winners-grid {{
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+    }}
+    .winner-box {{
+        background: white;
+        padding: 12px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        text-align: center;
+    }}
+    .winner-category {{ font-size: 0.75rem; color: #64748b; font-weight: 700; text-transform: uppercase; }}
+    .winner-name {{ font-size: 1rem; font-weight: 800; color: #0f172a; margin: 4px 0; }}
+    .winner-score {{ font-size: 0.85rem; font-weight: 700; color: #16a34a; }}
+
+    /* Pie de Flyer */
+    .flyer-footer {{
+        background-color: #1e293b;
+        color: white;
+        text-align: center;
+        padding: 15px;
+        border-radius: 10px;
+        font-size: 0.9rem;
+        font-weight: 600;
+    }}
+</style>
+
+<div class="flyer-container">
+    <!-- CABECERA -->
+    <div class="flyer-header">
+        <h1>🌱 CAMPAÑAS AMBIENTALES 2026</h1>
+        <p>¡Nuestras acciones diarias construyen un planeta sostenible!</p>
+    </div>
+
+    <!-- BANNER DE IMPACTO GLOBAL -->
+    <div class="flyer-impact-banner">
+        <div>
+            <div class="impact-stat">{total_kg:.1f} kg</div>
+            <div class="impact-label">Total Recolectado</div>
+        </div>
+        <div style="border-left: 2px solid #fcd34d; height: 40px;"></div>
+        <div>
+            <div class="impact-stat">{len(df)}</div>
+            <div class="impact-label">Héroes Participantes</div>
+        </div>
+    </div>
+
+    <!-- TRES BLOQUES DE IMPACTO TANGIBLE -->
+    <div class="flyer-grid">
+        <div class="flyer-card card-green">
+            <div class="card-icon">♻️</div>
+            <div class="card-title">Botellas con Amor</div>
+            <div class="card-value">{total_botellas:.1f} kg</div>
+            <div class="card-desc">Transformados en madera plástica para parques y vivienda social.</div>
+        </div>
+        <div class="flyer-card card-blue">
+            <div class="card-icon">🔵</div>
+            <div class="card-title">Tapas para Sanar</div>
+            <div class="card-value">{total_tapas:.1f} kg</div>
+            <div class="card-desc">Cerca de 100,000 tapitas apoyando tratamientos de salud infantil.</div>
+        </div>
+        <div class="flyer-card card-amber">
+            <div class="card-icon">🛢️</div>
+            <div class="card-title">Aceite Green Fuel</div>
+            <div class="card-value">{total_aceite:.1f} kg</div>
+            <div class="card-desc">Protegimos más de <b>+{agua_protegida_litros:,} L</b> de agua de contaminación.</div>
+        </div>
+    </div>
+
+    <!-- CUADRO DE HONOR / LÍDERES -->
+    <div class="flyer-winners-section">
+        <div class="winners-title">🏆 Cuadro de Honor del Mes</div>
+        <div class="winners-grid">
+            <div class="winner-box">
+                <div class="winner-category">🥇 Planta (Botellas)</div>
+                <div class="winner-name">{ganador_botellas_op}</div>
+                <div class="winner-score">{ganador_botellas_op_kg:.1f} kg</div>
+            </div>
+            <div class="winner-box">
+                <div class="winner-category">🥇 Planta (Tapas)</div>
+                <div class="winner-name">{ganador_tapas_op}</div>
+                <div class="winner-score">{ganador_tapas_op_kg:.1f} kg</div>
+            </div>
+            <div class="winner-box">
+                <div class="winner-category">🏬 Tienda Líder</div>
+                <div class="winner-name">{ganador_tienda_botellas}</div>
+                <div class="winner-score">Top Botellas</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PIE DE PÁGINA / LLAMADO A LA ACCIÓN -->
+    <div class="flyer-footer">
+        📢 ¡Suma tus residuos esta semana! Trae tu aceite, tapas y botellas a los puntos ecológicos.
+    </div>
+</div>
+"""
+
+# Renderizar en Streamlit
+st.markdown(html_flyer, unsafe_allow_html=True)
+st.markdown("<br>", unsafe_allow_html=True)
 
 st.markdown("---")
 st.caption("🌿 Dashboard Campañas Ambientales · Streamlit + Plotly")
