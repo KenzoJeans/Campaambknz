@@ -172,6 +172,22 @@ GRUPO_NOMBRES = {
     "Grupo 6": "Grupo 6 (Tintorería)",
 }
 
+# ──────────────────────────────────────────────
+# EQUIVALENCIAS DE IMPACTO (AJUSTABLES)
+# ──────────────────────────────────────────────
+# Estimaciones referenciales de uso común en campañas de reciclaje.
+# Ajusta estos valores si tu equipo ambiental cuenta con cifras oficiales propias.
+PESO_PROMEDIO_BOTELLA_G               = 25    # peso promedio de una botella PET (gramos)
+PESO_PROMEDIO_TAPA_G                  = 2     # peso promedio de una tapa plástica (gramos)
+CO2_EVITADO_KG_POR_KG_PET             = 1.5   # kg de CO2 evitado por kg de PET reciclado
+LITROS_AGUA_PROTEGIDOS_POR_KG_ACEITE  = 1100  # litros de agua que se evita contaminar por kg de aceite bien dispuesto
+
+# Impacto social de "Tapas para Sanar": según Fundación Sanar, se necesitan
+# ~3.000 tapitas (≈ 6 a 8 kg de plástico) para financiar 1 tratamiento de
+# quimioterapia. Se usa el punto medio (7 kg) como estimación.
+KG_TAPAS_POR_TRATAMIENTO = 7       # kg de tapas ≈ 1 tratamiento financiado (rango real: 6-8 kg)
+NOMBRE_FUNDACION_TAPAS   = "Fundación Sanar"
+
 
 # ──────────────────────────────────────────────
 # FUNCIONES AUXILIARES
@@ -496,6 +512,23 @@ def generar_infografia_html(df, df_op, df_tienda, filtro_texto):
     df_tienda_tot["total_kg"] = df_tienda_tot["botellas_kg"] + df_tienda_tot["tapas_kg"] + df_tienda_tot["aceite_kg"]
     top3_tda = top_n_df(df_tienda_tot, "tienda", "total_kg", 3)
 
+    # ── Equivalencias de impacto ──────────────────────────────────
+    n_botellas  = int(total_botellas * 1000 / PESO_PROMEDIO_BOTELLA_G) if PESO_PROMEDIO_BOTELLA_G else 0
+    n_tapas_eq  = int(total_tapas * 1000 / PESO_PROMEDIO_TAPA_G) if PESO_PROMEDIO_TAPA_G else 0
+    co2_evitado = total_botellas * CO2_EVITADO_KG_POR_KG_PET
+    litros_agua = total_aceite * LITROS_AGUA_PROTEGIDOS_POR_KG_ACEITE
+
+    if KG_TAPAS_POR_TRATAMIENTO:
+        tratamientos = total_tapas / KG_TAPAS_POR_TRATAMIENTO
+        tarjeta_tratamientos = f"""
+      <div class="kpi-card">
+        <div class="kpi-icono">🏥</div>
+        <div class="kpi-valor"><span class="counter" data-target="{tratamientos:.1f}" data-decimals="1">0</span></div>
+        <div class="kpi-label">Tratamientos financiados · {html_lib.escape(NOMBRE_FUNDACION_TAPAS)}</div>
+      </div>"""
+    else:
+        tarjeta_tratamientos = ""
+
     def _podio_html(top_df, label_col):
         medallas = ["🥇", "🥈", "🥉"]
         max_val = top_df["total_kg"].max() if not top_df.empty else 1
@@ -581,9 +614,22 @@ def generar_infografia_html(df, df_op, df_tienda, filtro_texto):
   .cierre-icono {{ font-size:2.2rem; animation: latir 1.8s ease-in-out infinite; }}
   @keyframes latir {{ 0%,100% {{ transform: scale(1);}} 50% {{ transform: scale(1.15);}} }}
   .footer-nota {{ color:#5f6a78; font-size:.7rem; margin-top:1.6rem; }}
+  .compartir-flotante {{ position: sticky; top: 10px; text-align:right; padding: 0 1.2rem; z-index: 50; }}
+  .btn-compartir {{
+    background: linear-gradient(135deg,#34d399,#16a34a); color:#0e1117; border:none;
+    padding:.5rem .95rem; border-radius:20px; font-weight:700; font-size:.75rem;
+    font-family:'Inter',sans-serif; cursor:pointer; box-shadow: 0 4px 14px rgba(0,0,0,.35);
+  }}
+  .btn-compartir:hover {{ filter:brightness(1.08); }}
+  .btn-compartir:disabled {{ opacity:.7; cursor:progress; }}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body>
+
+  <div class="compartir-flotante">
+    <button id="btnDescargarImagen" class="btn-compartir">📸 Descargar como imagen</button>
+  </div>
 
   <section class="seccion hero reveal">
     <div class="hero-icono">🌿</div>
@@ -642,6 +688,33 @@ def generar_infografia_html(df, df_op, df_tienda, filtro_texto):
   </section>
 
   <section class="seccion reveal">
+    <div class="titulo-seccion">🌎 Equivalencias de tu impacto</div>
+    <div class="kpis">
+      <div class="kpi-card">
+        <div class="kpi-icono">🍼</div>
+        <div class="kpi-valor"><span class="counter" data-target="{n_botellas}" data-decimals="0">0</span></div>
+        <div class="kpi-label">Botellas PET salvadas</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icono">🌫️</div>
+        <div class="kpi-valor"><span class="counter" data-target="{co2_evitado:.0f}" data-decimals="0">0</span> kg</div>
+        <div class="kpi-label">CO2 evitado</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icono">🧴</div>
+        <div class="kpi-valor"><span class="counter" data-target="{n_tapas_eq}" data-decimals="0">0</span></div>
+        <div class="kpi-label">Tapas recicladas</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icono">💧</div>
+        <div class="kpi-valor"><span class="counter" data-target="{litros_agua:.0f}" data-decimals="0">0</span> L</div>
+        <div class="kpi-label">Agua protegida</div>
+      </div>{tarjeta_tratamientos}
+    </div>
+    <p class="footer-nota">*Estimaciones referenciales de reciclaje, ajustables en el código.</p>
+  </section>
+
+  <section class="seccion reveal">
     <div class="titulo-seccion">🏭 Los héroes del reciclaje — Operadores</div>
     {podio_operadores}
   </section>
@@ -690,6 +763,32 @@ def generar_infografia_html(df, df_op, df_tienda, filtro_texto):
       }});
     }}, {{threshold: 0.2}});
     document.querySelectorAll('.reveal').forEach(function(el) {{ observer.observe(el); }});
+
+    var btnImg = document.getElementById('btnDescargarImagen');
+    if (btnImg && window.html2canvas) {{
+      btnImg.addEventListener('click', function() {{
+        btnImg.disabled = true;
+        btnImg.textContent = '⏳ Generando...';
+        btnImg.style.visibility = 'hidden';
+        setTimeout(function() {{
+          html2canvas(document.body, {{ backgroundColor: '#0e1117', useCORS: true, scale: 2 }}).then(function(canvas) {{
+            var link = document.createElement('a');
+            link.download = 'infografia_campanas_ambientales.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            btnImg.disabled = false;
+            btnImg.style.visibility = 'visible';
+            btnImg.textContent = '📸 Descargar como imagen';
+          }}).catch(function(err) {{
+            console.error(err);
+            btnImg.disabled = false;
+            btnImg.style.visibility = 'visible';
+            btnImg.textContent = '📸 Descargar como imagen';
+            alert('No se pudo generar la imagen. Intenta de nuevo.');
+          }});
+        }}, 150);
+      }});
+    }}
   }});
 </script>
 </body>
